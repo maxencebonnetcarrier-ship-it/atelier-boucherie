@@ -146,6 +146,9 @@ try {
   await attendre(400);
   const m0 = await lire("[window.ATELIER3D.modeCourant().squelette, window.ATELIER3D.osAffiches().length]");
   if (!m0[0] || m0[1] < 8) erreurs.push(`squelette du bœuf : mode ${m0[0]}, ${m0[1]} noms d'os affichés`);
+  // ce qui est réellement AFFICHÉ (pas seulement l'attribut hidden) : pas de filtres de cuisson en mode squelette
+  const legendeVue = await lire("getComputedStyle(document.getElementById('legende')).display");
+  if (legendeVue !== "none") erreurs.push(`mode squelette : la ligne des filtres de cuisson reste affichée (display ${legendeVue})`);
   for (const o of OS.boeuf) {
     const pt = await lire(`window.ATELIER3D.pointEcranOs(${JSON.stringify(o.id)})`);
     if (!pt) { erreurs.push(`os ${o.id} : aucun point visible`); continue; }
@@ -179,8 +182,8 @@ try {
   if (!lien) erreurs.push("fiche du paleron : pas de lien vers la palette");
   await aller("#veau");
   await attendre(200);
-  const cache = await lire(`document.querySelector('#outils3d [data-squelette]').hidden`);
-  if (!cache) erreurs.push("bouton Squelette visible sur le veau (pas encore de squelette)");
+  const cache = await lire(`getComputedStyle(document.querySelector('#outils3d [data-squelette]')).display`);
+  if (cache !== "none") erreurs.push(`bouton Squelette affiché sur le veau (pas encore de squelette) : display ${cache}`);
 
   // 8. Agneau, et affichage téléphone.
   await aller("#agneau/gigot");

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atelier Boucherie — pièces, cuissons, recettes</title>
+  <meta name="description" content="Apprendre la boucherie : clique sur une pièce pour connaître sa cuisson, ses transformations et des recettes à proposer au client.">
+  <meta name="theme-color" content="#2b2320">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Boucherie">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="img/icone-192.png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="entete">
+    <div class="marque">
+      <span class="marque-logo" aria-hidden="true">🔪</span>
+      <div>
+        <h1>Atelier Boucherie</h1>
+        <p>Clique sur une pièce : cuisson, transformations et recettes à conseiller.</p>
+      </div>
+    </div>
+    <nav class="onglets" id="onglets" aria-label="Choix de l’animal"></nav>
+  </header>
+
+  <main class="page" id="page">
+    <section class="colonne-planche" id="vue-planche" aria-label="Planche de découpe">
+      <div class="planche" id="planche"></div>
+      <div class="legende" id="legende" aria-label="Filtrer par mode de cuisson"></div>
+      <div class="liste-pieces" id="liste-pieces" aria-label="Toutes les pièces"></div>
+    </section>
+    <aside class="panneau" id="panneau" aria-live="polite"></aside>
+    <section class="comparatif" id="vue-comparatif" hidden></section>
+  </main>
+
+  <div class="bulle" id="bulle" hidden></div>
+
+  <footer class="pied">
+    Planches et comparatif : supports de cours fournis (École des Métiers Bigard pour le comparatif).
+    Contenu pédagogique à valider avec ton formateur.
+  </footer>
+
+  <script src="data/zones.js"></script>
+  <script src="data/recettes.js"></script>
+  <script src="data/pieces.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

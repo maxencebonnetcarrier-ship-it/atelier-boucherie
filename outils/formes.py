@@ -53,7 +53,11 @@ class Sculpture:
 
     def __init__(self):
         self.pieces = []  # (fonction(P) -> distance, k, partie)
+        self.trous = []   # (fonction(P) -> distance, k) : volumes creusés après coup (orbites, trous des os)
         self.yeux = []    # ((x, y, z), rayon) : billes posées sur la tête, côté +z (symétrisées à l'export)
+
+    def creuser(self, f, k=0.004):
+        self.trous.append((f, k))
 
     def oeil(self, c, r):
         self.yeux.append((c, r))
@@ -84,6 +88,10 @@ class Sculpture:
         for f, k, _ in self.pieces:
             di = f(P)
             d = di if d is None else union_douce(d, di, k)
+        for f, k in self.trous:  # soustraction douce
+            t = f(P)
+            h = np.clip(0.5 - 0.5 * (d + t) / k, 0.0, 1.0)
+            d = d * (1 - h) + (-t) * h + k * h * (1 - h)
         return d
 
     def parties(self, P):

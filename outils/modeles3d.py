@@ -15,6 +15,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from formes import ESPECES  # noqa: E402
+from squelette import SQUELETTES, sculptures  # noqa: E402
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTROLE = os.path.join(RACINE, "outils", "controle")
@@ -301,6 +302,29 @@ def b64(a):
     return base64.b64encode(np.ascontiguousarray(a).tobytes()).decode()
 
 
+def exporter_os(nom):
+    """Un maillage par os (et par côté pour les os pairs), dans les coordonnées du modèle."""
+    from skimage.measure import marching_cubes
+    import fast_simplification as fs
+    sortie = []
+    for oid, cote, s, cible in sculptures(nom):
+        vol, axes = volume(s, pas=0.005)
+        pas = float(axes[0][1] - axes[0][0])
+        v, f, _, _ = marching_cubes(vol, 0.0, spacing=(pas, pas, pas))
+        v += np.array([axes[0][0], axes[1][0], axes[2][0]])
+        if len(f) > cible:
+            v, f = fs.simplify(v.astype(np.float32), f.astype(np.int64), target_reduction=1 - cible / len(f))
+        noms, lab = s.parties(v.astype(np.float32)[None])
+        code = np.array([{"cartilage": 1, "dent": 2}.get(noms[i], 0) for i in lab[0]], np.uint8)
+        lo, hi = v.min(0), v.max(0)
+        q = np.round((v - lo) / np.maximum(hi - lo, 1e-6) * 65535).astype("<u2")
+        sortie.append({"id": oid, "cote": cote, "boite": [lo.round(5).tolist(), hi.round(5).tolist()],
+                       "centre": v.mean(0).round(4).tolist(), "sommets": b64(q), "triangles": b64(f.astype("<u2")),
+                       "parties": b64(code)})
+        print(f"   os {oid}{'/' + cote if cote else ''}: {len(v)} sommets, {len(f)} triangles")
+    return sortie
+
+
 def exporter(nom, triangles=16000):
     from skimage.measure import marching_cubes
     import fast_simplification as fs
@@ -336,6 +360,7 @@ def exporter(nom, triangles=16000):
         "carte": {"largeur": C.shape[1], "hauteur": C.shape[0], "x0": x0, "x1": x1, "y0": y0, "y1": y1,
                   "rle": rle((C + 1).astype(np.uint8))},
         "pieces": ids, "centres": centres, "aires": aires,
+        **({"os": exporter_os(nom)} if nom in SQUELETTES else {}),
     }, len(v), len(f)
 
 

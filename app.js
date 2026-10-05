@@ -3,11 +3,12 @@
   "use strict";
 
   const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES } = window;
+  const OS = window.OS || {};
   const RAPIDES = ["griller", "poeler", "rotir", "sauter", "cru"];
   const LENTES = ["braiser", "bouillir"];
 
   const $ = (id) => document.getElementById(id);
-  const etat = { animal: ANIMAUX[0].id, piece: null, filtre: null, vue: "planche", montrer: true };
+  const etat = { animal: ANIMAUX[0].id, piece: null, filtre: null, vue: "planche", montrer: true, squelette: false, os: null, eclate: false };
 
   // Couleur d'une pièce sur le modèle 3D = sa famille de cuisson (même code pour les 4 animaux).
   // Plusieurs nuances par famille, pour que deux pièces voisines ne se confondent pas.
@@ -23,6 +24,8 @@
   // ---------- utilitaires ----------
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const pieceDe = (animal, id) => (PIECES[animal] || []).find((p) => p.id === id) || null;
+  const osDe = (animal, id) => (OS[animal] || []).find((o) => o.id === id) || null;
+  const osDePiece = (animal, piece) => (OS[animal] || []).filter((o) => o.pieces.includes(piece));
   const nomAnimal = (id) => (ANIMAUX.find((a) => a.id === id) || {}).nom || id;
 
   function typeCuisson(piece) {
@@ -41,18 +44,26 @@
 
   // ---------- navigation (adresse #animal/piece) ----------
   function lireAdresse() {
-    const [a, p] = decodeURIComponent(location.hash.replace(/^#/, "")).split("/");
+    const [a, p, q] = decodeURIComponent(location.hash.replace(/^#/, "")).split("/");
     if (a === "comparatif") { etat.vue = "comparatif"; return; }
     etat.vue = "planche";
     if (ANIMAUX.some((x) => x.id === a)) {
-      if (a !== etat.animal) etat.filtre = null;
+      if (a !== etat.animal) { etat.filtre = null; etat.eclate = false; }
       etat.animal = a;
-      etat.piece = p && pieceDe(a, p) ? p : null;
+      etat.squelette = p === "squelette" && !!OS[a];
+      if (!etat.squelette) etat.eclate = false;
+      etat.os = etat.squelette && q && osDe(a, q) ? q : null;
+      etat.piece = !etat.squelette && p && pieceDe(a, p) ? p : null;
     }
   }
 
   function aller(animal, piece) {
-    const cible = "#" + animal + (piece ? "/" + piece : "");
+    allerA("#" + animal + (piece ? "/" + piece : ""));
+  }
+  function allerOs(animal, os) {
+    allerA("#" + animal + "/squelette" + (os ? "/" + os : ""));
+  }
+  function allerA(cible) {
     if (location.hash === cible) { lireAdresse(); rendre(); } else { location.hash = cible; }
   }
 
@@ -122,20 +133,45 @@
 
   function rendre3D() {
     if (!vue3d) {
-      vue3d = window.Vue3D($("planche"), { surClic: choisirSurModele, surSurvol: montrerBulle });
+      vue3d = window.Vue3D($("planche"), { surClic: choisirSurModele, surClicOs: choisirOsSurModele, surSurvol: montrerBulle });
       window.ATELIER3D = vue3d; // accès pour les tests automatiques
     }
     vue3d.afficher(etat.animal, Object.fromEntries(PIECES[etat.animal].map((p) => [p.id, nomCourt(p)])));
+    const os = etat.os && osDe(etat.animal, etat.os);
+    vue3d.squelette(etat.squelette, Object.fromEntries((OS[etat.animal] || []).map((o) => [o.id, o.nom])));
+    vue3d.eclater(etat.squelette && etat.eclate);
     vue3d.etat({
-      couleurs: couleursPieces(), selection: etat.piece,
+      couleurs: couleursPieces(), selection: etat.piece, forts: os ? os.pieces : [],
       etiquettes: etat.filtre ? PIECES[etat.animal].filter(correspond).map((p) => p.id) : null,
     });
+    vue3d.etatOs({ selection: etat.os, lies: etat.piece ? osDePiece(etat.animal, etat.piece).map((o) => o.id) : [] });
     if (etat.piece && etat.montrer) vue3d.focaliser(etat.piece);
+    if (etat.os && etat.montrer) vue3d.focaliserOs(etat.os);
     etat.montrer = true;
+    rendreOutils();
     $("planche").setAttribute("aria-label", `${nomAnimal(etat.animal)} en 3D : glisse pour le faire tourner, clique sur une pièce`);
   }
 
+  // Boutons Squelette / Éclater : seulement pour un animal dont le squelette existe.
+  function rendreOutils() {
+    const bs = document.querySelector("#outils3d [data-squelette]");
+    const be = document.querySelector("#outils3d [data-eclater]");
+    bs.hidden = !OS[etat.animal];
+    bs.setAttribute("aria-pressed", String(etat.squelette));
+    be.hidden = !etat.squelette;
+    be.setAttribute("aria-pressed", String(etat.eclate));
+    be.textContent = etat.eclate ? "Rassembler" : "Éclater";
+    document.querySelector(".aide3d").textContent = etat.squelette ? "Glisse pour tourner · touche un os" : "Glisse pour tourner · touche une pièce";
+  }
+
   function rendreCouleurs() {
+    if (etat.squelette) {
+      $("couleurs3d").innerHTML = `<span class="titre">Couleurs :</span>`
+        + `<span class="pastille" style="--c:#ebe0c9">os</span>`
+        + `<span class="pastille" style="--c:#f2b42e">os choisi</span>`
+        + `<span class="pastille" style="--c:rgba(217,56,60,.6)">pièces posées sur l’os choisi</span>`;
+      return;
+    }
     const presentes = [...new Set(PIECES[etat.animal].map(famille))];
     const noms = { rapide: "cuisson rapide", lente: "cuisson lente", mixte: "rapide ou lente", abat: "abat" };
     $("couleurs3d").innerHTML = `<span class="titre">Couleurs :</span>` + ["rapide", "mixte", "lente", "abat"]
@@ -146,6 +182,8 @@
 
   function rendreLegende() {
     const leg = $("legende");
+    leg.hidden = etat.squelette;
+    if (etat.squelette) return;
     const presents = Object.keys(CUISSONS).filter((c) => PIECES[etat.animal].some((p) => p.cuissons.includes(c)));
     let html = `<span class="titre">Voir les pièces à :</span>`;
     html += presents.map((c) => {
@@ -161,6 +199,15 @@
 
   function rendreListe() {
     const liste = $("liste-pieces");
+    if (etat.squelette) {
+      const tous = OS[etat.animal];
+      const groupes = [...new Set(tous.map((o) => o.groupe))];
+      liste.innerHTML = `<h2>Tous les os (${tous.length})</h2>` + groupes.map((g) => `<h2 class="sous">${esc(g)}</h2><div class="grille">`
+        + tous.filter((o) => o.groupe === g).map((o) =>
+          `<button type="button" class="${o.id === etat.os ? "active" : ""}" data-os="${o.id}">${esc(o.nom)}</button>`).join("")
+        + `</div>`).join("");
+      return;
+    }
     const pieces = [...PIECES[etat.animal]].sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
     liste.innerHTML = `<h2>Toutes les pièces (${pieces.length})</h2><div class="grille">` +
       pieces.map((p) => {
@@ -220,8 +267,49 @@
       <div class="equivalences">${lignes}</div>`;
   }
 
+  function rendreAccueilSquelette() {
+    return `<div class="accueil">
+      <div class="kicker">${esc(nomAnimal(etat.animal))} · squelette</div>
+      <h2>Touche un os</h2>
+      <p>Le corps devient transparent : les os apparaissent à leur place. Chaque pièce de viande repose sur un os ; désosser, c’est suivre l’os.</p>
+      <div class="pas">
+        <div><b>1</b><span>Touche un os (ou choisis-le dans la liste) : son nom de boucher, son nom savant et les pièces posées dessus s’affichent.</span></div>
+        <div><b>2</b><span>Les pièces posées sur l’os restent colorées sur le corps transparent.</span></div>
+        <div><b>3</b><span>« Éclater » écarte les os les uns des autres, « Rassembler » remonte le squelette.</span></div>
+      </div>
+    </div>`;
+  }
+
+  function rendreFicheOs(o) {
+    const pieces = o.pieces.map((id) => pieceDe(etat.animal, id)).filter(Boolean);
+    return `
+      <div class="kicker">${esc(nomAnimal(etat.animal))} · squelette</div>
+      <h2>${esc(o.nom)}</h2>
+      <p class="alias">${esc(o.savant)}</p>
+      <p>${esc(o.savoir)}</p>
+      <div class="conseil"><strong>Au désossage :</strong> ${esc(o.desossage)}</div>
+      ${o.mrs ? `<p class="note-mrs">⚠️ ${esc(window.REGLE_MRS)}</p>` : ""}
+      <h3>Pièces posées sur cet os</h3>
+      ${pieces.length ? `<ul class="transfo">${pieces.map((p) => `<li><a href="#${etat.animal}/${p.id}"><b>${esc(p.nom)}</b></a><span>${esc(typeCuisson(p).txt)}</span></li>`).join("")}</ul>`
+        : `<p>Aucune pièce de ta planche ne repose sur cet os.</p>`}
+      <p class="source">Sources : fiche « Le squelette du bovin » (École des Métiers Bigard) ; tableau des pièces de bœuf (colonne OS) ; Wikipédia, « Désossage ». Conseils à faire valider par ton formateur.</p>`;
+  }
+
+  function rendreOsDePiece(piece) {
+    const liste = osDePiece(etat.animal, piece.id);
+    if (!liste.length) return "";
+    return `<h3>Sur quel os ?</h3>
+      <p class="os-lien">${liste.map((o) => `<a href="#${etat.animal}/squelette/${o.id}">${esc(o.nom)}</a> <small>(${esc(o.savant)})</small>`).join(" · ")}</p>`;
+  }
+
   function rendrePanneau() {
     const panneau = $("panneau");
+    if (etat.squelette) {
+      const o = etat.os && osDe(etat.animal, etat.os);
+      panneau.innerHTML = o ? rendreFicheOs(o) : rendreAccueilSquelette();
+      panneau.scrollTop = 0;
+      return;
+    }
     const piece = etat.piece && pieceDe(etat.animal, etat.piece);
     if (!piece) { panneau.innerHTML = rendreAccueil(); return; }
     const t = typeCuisson(piece);
@@ -236,6 +324,8 @@
 
       <h3>Transformations bouchères</h3>
       <ul class="transfo">${piece.transformations.map(([n, d]) => `<li><b>${esc(n)}</b><span>${esc(d)}</span></li>`).join("")}</ul>
+
+      ${rendreOsDePiece(piece)}
 
       <h3>Recettes simples à proposer</h3>
       ${piece.recettes.map((r, i) => rendreRecette(r, i === 0)).join("")}
@@ -292,11 +382,23 @@
     choisir(id);
   }
 
+  function choisirOs(id) {
+    allerOs(etat.animal, id);
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      $("panneau").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+  function choisirOsSurModele(id) {
+    etat.montrer = false;
+    choisirOs(id);
+  }
+
   const bulle = $("bulle");
-  function montrerBulle(id, x, y) {
-    const p = id && pieceDe(etat.animal, id);
-    if (!p || x === undefined) { bulle.hidden = true; return; }
-    bulle.textContent = p.nom;
+  // cible : { type: "piece" | "os", id } ou null
+  function montrerBulle(cible, x, y) {
+    const nom = !cible ? null : cible.type === "os" ? (osDe(etat.animal, cible.id) || {}).nom : (pieceDe(etat.animal, cible.id) || {}).nom;
+    if (!nom || x === undefined) { bulle.hidden = true; return; }
+    bulle.textContent = nom;
     bulle.style.left = x + "px";
     bulle.style.top = y + "px";
     bulle.hidden = false;
@@ -308,6 +410,10 @@
     if (b.dataset.vue) vue3d.vue(b.dataset.vue);
     if (b.dataset.zoom) vue3d.zoomer(parseFloat(b.dataset.zoom));
     if (b.hasAttribute("data-noms")) b.setAttribute("aria-pressed", String(vue3d.noms(b.getAttribute("aria-pressed") !== "true")));
+    if (b.hasAttribute("data-squelette")) {
+      if (etat.squelette) aller(etat.animal, null); else allerOs(etat.animal, null);
+    }
+    if (b.hasAttribute("data-eclater")) { etat.eclate = !etat.eclate; rendre(); }
   });
 
   $("legende").addEventListener("click", (e) => {
@@ -321,6 +427,8 @@
   $("liste-pieces").addEventListener("click", (e) => {
     const b = e.target.closest("[data-piece]");
     if (b) choisir(b.dataset.piece);
+    const o = e.target.closest("[data-os]");
+    if (o) choisirOs(o.dataset.os);
   });
   $("vue-comparatif").addEventListener("click", (e) => {
     const b = e.target.closest("[data-region]");

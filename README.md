@@ -22,6 +22,17 @@ Double-clique sur `app/index.html`. Elle fonctionne sans internet et sans instal
 - **Comparatif** : c'est la fiche « Comparatif dénomination musculaire ». Clique sur une case pour surligner la région sur l'animal.
 - **Adresse directe** : `index.html#boeuf/paleron` ouvre directement la fiche du paleron.
 
+### Squelette (bœuf)
+
+- Le bouton **Squelette** rend le corps transparent et montre les **17 os ou groupes d'os** à leur place : tête, vertèbres du cou, du dos et des reins, sacrum, queue, côtes, sternum, palette, boîte à moelle (humérus), os des jarrets, canons, os du bassin, fémur, rotule.
+- **Style dessin animé, vraies formes** : chaque os garde sa forme réelle, simplifiée. On reconnaît la tête et le col du fémur, l'arête de la palette, le trou du bassin, la pointe du coude et du jarret, les deux doigts du pied, les « étagères » des vertèbres des reins, le crâne avec ses orbites, les chevilles des cornes et les dents. Les cartilages (bout des côtes, bord de la palette) sont bleutés. L'animal et les os ont des ombres en aplats et un contour foncé.
+- **Gros plan** : choisir un os dans la liste fait tourner l'animal, rapproche la caméra et centre l'os à l'écran.
+- **Touche un os** : sa fiche donne son nom de boucher et son nom savant, les **pièces posées dessus** et un conseil « Au désossage ». Ces pièces restent colorées sur le corps transparent.
+- **Éclater / Rassembler** : les os s'écartent les uns des autres, puis se remettent en place, comme pour remonter le squelette.
+- Dans la fiche de chaque pièce, la rubrique **« Sur quel os ? »** mène à l'os correspondant.
+- Adresse directe : `index.html#boeuf/squelette/palette`.
+- Sources : la fiche « Le squelette du bovin » (École des Métiers Bigard) pour la place des os ; le [tableau des pièces de bœuf](http://www.ecomet.fr/tableau_des_pieces_de_beef.pdf) (colonne OS) et l'article [Désossage](https://fr.wikipedia.org/wiki/D%C3%A9sossage) de Wikipédia pour le lien os ↔ pièces. Les fiches sont dans `app/data/os.js`, et la forme des os dans `outils/squelette.py`.
+
 ## Sur le téléphone
 
 L'appli est en ligne à l'adresse **https://maxencebonnetcarrier-ship-it.github.io/atelier-boucherie/** (GitHub Pages, dépôt `maxencebonnetcarrier-ship-it/atelier-boucherie`).
@@ -72,6 +83,7 @@ node outils/apercu.mjs boeuf depart profil avant arriere dessus   # captures 3D
 - Le contenu (cuissons, transformations, recettes) a été rédigé pour l'appli : **fais-le relire**.
 - **Porc** : une petite zone sans nom, sous le travers, a été rattachée à la **poitrine** (hypothèse).
 - **Agneau** : la gravure est ancienne et ses pointillés sont ouverts. Le haut de côtelettes et les pieds sont donc tracés à la main, avec des contours approximatifs. Sur la gravure, l'agneau broute : sa tête et son collet sont reportés sur un agneau debout.
+- **Squelette** : les os sont **stylisés** et placés d'après la fiche Bigard, pas mesurés sur un vrai squelette. Les conseils « Au désossage » ont été rédigés pour l'appli, à partir du tableau des pièces et de Wikipédia : **fais-les valider**. Pour la macreuse à bifteck, les sources ne s'accordent pas sur le muscle exact ; elles s'accordent sur l'os (la palette), qui est le seul point affiché.
 - **Modèles 3D** : ce sont des animaux **stylisés**, pas des modèles anatomiques. Les découpes sont reportées des planches, vues de profil : les frontières entre pièces sont donc approximatives, surtout sur le dessus du dos et sous le ventre.
 - **Comparatif** : la fiche place le **merlan** dans l'épaule du bœuf, alors que la planche du bœuf le met dans la cuisse (avec la tende de tranche). L'appli recopie la fiche telle quelle.
 - **Droits** : l'image du porc est une image Adobe Stock avec filigrane (n° 396567493). Elle **n'est plus affichée** dans l'appli : seul son découpage sert de guide. Mais elle est encore présente dans `sources/`, donc dans le dépôt public.

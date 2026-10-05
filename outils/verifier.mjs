@@ -8,10 +8,10 @@ import vm from "node:vm";
 const APP = process.env.APP_DIR || join(dirname(dirname(fileURLToPath(import.meta.url))), "app");
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js"]) {
+for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js"]) {
   vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx, { filename: f });
 }
-const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D } = ctx.window;
+const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D, OS } = ctx.window;
 
 const erreurs = [];
 const err = (m) => erreurs.push(m);
@@ -90,9 +90,32 @@ for (const [id, r] of Object.entries(RECETTES)) {
   if (!r.ingredients?.length || !r.etapes?.length) err(`recette ${id}: ingrédients ou étapes manquants`);
 }
 
+// --- squelettes : chaque os a sa fiche complète et son maillage, et ne cite que des pièces existantes
+let nbOs = 0;
+for (const [animal, liste] of Object.entries(OS || {})) {
+  const m = MODELES3D[animal];
+  if (!m || !m.os) { err(`${animal}: fiches d'os sans squelette 3D`); continue; }
+  const ids = new Set(liste.map((o) => o.id));
+  if (ids.size !== liste.length) err(`${animal}: identifiant d'os en double`);
+  const maillages = new Set(m.os.map((e) => e.id));
+  for (const id of maillages) if (!ids.has(id)) err(`${animal}/os ${id}: maillage sans fiche`);
+  for (const o of liste) {
+    const ou = `${animal}/os ${o.id}`;
+    nbOs++;
+    if (!maillages.has(o.id)) err(`${ou}: fiche sans maillage 3D`);
+    for (const k of ["nom", "savant", "savoir", "desossage", "groupe"]) if (!o[k]) err(`${ou}: champ ${k} vide`);
+    for (const p of o.pieces) if (!PIECES[animal].some((x) => x.id === p)) err(`${ou}: pièce inconnue « ${p} »`);
+  }
+  for (const e of m.os) {
+    const n = octets(e.sommets).length / 6;
+    const idx = new Uint16Array(octets(e.triangles).buffer);
+    if (!Number.isInteger(n) || n < 20 || idx.length % 3 || idx.some((i) => i >= n)) err(`${animal}/os ${e.id}${e.cote}: maillage invalide`);
+  }
+}
+
 const nbPieces = ANIMAUX.reduce((n, a) => n + (PIECES[a.id]?.length || 0), 0);
 if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${ANIMAUX.length} animaux, ${nbPieces} pièces, ${Object.keys(RECETTES).length} recettes, modèles 3D et fiches cohérents.`);
+console.log(`OK — ${ANIMAUX.length} animaux, ${nbPieces} pièces, ${Object.keys(RECETTES).length} recettes, ${nbOs} os, modèles 3D et fiches cohérents.`);

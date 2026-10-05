@@ -17,8 +17,8 @@ const URL_APP = process.argv[2] || pathToFileURL(join(APP, "index.html")).href;
 // Données de référence (lues comme le fait la page).
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/recettes.js", "data/pieces.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
-const { ANIMAUX, PIECES } = ctx.window;
+for (const f of ["data/recettes.js", "data/pieces.js", "data/os.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
+const { ANIMAUX, PIECES, OS } = ctx.window;
 
 const erreurs = [];
 let clics = 0;
@@ -140,6 +140,48 @@ try {
   await lire("window.scrollTo(0,0)");
   await nav.capture(join(CAPTURES, "5-veau-region-epaule.png"));
 
+  // 7 bis. Squelette du bœuf : chaque os est visible, se clique et ouvre sa fiche ; vue éclatée.
+  let clicsOs = 0;
+  await aller("#boeuf/squelette");
+  await attendre(400);
+  const m0 = await lire("[window.ATELIER3D.modeCourant().squelette, window.ATELIER3D.osAffiches().length]");
+  if (!m0[0] || m0[1] < 8) erreurs.push(`squelette du bœuf : mode ${m0[0]}, ${m0[1]} noms d'os affichés`);
+  for (const o of OS.boeuf) {
+    const pt = await lire(`window.ATELIER3D.pointEcranOs(${JSON.stringify(o.id)})`);
+    if (!pt) { erreurs.push(`os ${o.id} : aucun point visible`); continue; }
+    await nav.cliquer(pt[0], pt[1]);
+    clicsOs++;
+    const [h, titre, forts, choisi] = await lire("[location.hash, (document.querySelector('#panneau h2')||{}).textContent, window.ATELIER3D.etatCourant().forts, window.ATELIER3D.modeCourant().os]");
+    if (h !== `#boeuf/squelette/${o.id}` || titre !== o.nom || choisi !== o.id) erreurs.push(`os ${o.id} : clic → ${h} « ${titre} » (choisi : ${choisi})`);
+    if ([...forts].sort().join() !== [...o.pieces].sort().join()) erreurs.push(`os ${o.id} : pièces surlignées ${forts} au lieu de ${o.pieces}`);
+  }
+  await allerOsCapture("#boeuf/squelette/palette", "9-boeuf-squelette-palette.png");
+  await lire(`document.querySelector('#outils3d [data-eclater]').click()`);
+  await attendre(1300);
+  const ecl = await lire("window.ATELIER3D.modeCourant()");
+  if (!ecl.eclate || ecl.eclat !== 1) erreurs.push(`vue éclatée : ${JSON.stringify(ecl)}`);
+  const ptEcl = await lire(`window.ATELIER3D.pointEcranOs("femur")`);
+  if (ptEcl) {
+    await nav.cliquer(ptEcl[0], ptEcl[1]);
+    const hEcl = await lire("location.hash");
+    if (hEcl !== "#boeuf/squelette/femur") erreurs.push(`clic sur le fémur en vue éclatée → ${hEcl}`);
+  } else erreurs.push("vue éclatée : fémur introuvable à l'écran");
+  await lire("window.scrollTo(0,0)");
+  await nav.capture(join(CAPTURES, "10-boeuf-squelette-eclate.png"));
+  await lire(`document.querySelector('#outils3d [data-eclater]').click()`);
+  await attendre(1300);
+  const ras = await lire("window.ATELIER3D.modeCourant()");
+  if (ras.eclate || ras.eclat !== 0) erreurs.push(`Rassembler : ${JSON.stringify(ras)}`);
+  // lien pièce → os, et pas de bouton Squelette pour un animal sans squelette
+  await aller("#boeuf/paleron");
+  await attendre(300);
+  const lien = await lire(`!!document.querySelector('#panneau a[href="#boeuf/squelette/palette"]')`);
+  if (!lien) erreurs.push("fiche du paleron : pas de lien vers la palette");
+  await aller("#veau");
+  await attendre(200);
+  const cache = await lire(`document.querySelector('#outils3d [data-squelette]').hidden`);
+  if (!cache) erreurs.push("bouton Squelette visible sur le veau (pas encore de squelette)");
+
   // 8. Agneau, et affichage téléphone.
   await aller("#agneau/gigot");
   await attendre(800);
@@ -166,9 +208,16 @@ try {
   await nav.fermer();
 }
 
+async function allerOsCapture(hash, fichier) {
+  await aller(hash);
+  await attendre(900);
+  await lire("window.scrollTo(0,0)");
+  await nav.capture(join(CAPTURES, fichier));
+}
+
 if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) sur ${clics} clics :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${clics} pièces cliquées sur les animaux 3D, chacune ouvre la bonne fiche ; survol, rotation, liste, filtre, comparatif et téléphone vérifiés. Captures : outils/captures/`);
+console.log(`OK — ${clics} pièces et ${OS.boeuf.length} os cliqués en 3D, chacun ouvre la bonne fiche ; survol, rotation, liste, filtre, comparatif, squelette, vue éclatée et téléphone vérifiés. Captures : outils/captures/`);
 process.exit(0);

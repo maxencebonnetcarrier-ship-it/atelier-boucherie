@@ -41,6 +41,8 @@ L'appli est en ligne à l'adresse **https://maxencebonnetcarrier-ship-it.github.
 2. Ajoute l'appli à l'écran d'accueil. Sur iPhone : bouton Partager, puis « Sur l'écran d'accueil ». Sur Android : menu ⋮, puis « Ajouter à l'écran d'accueil ».
 3. L'icône « Boucherie » s'ouvre alors en plein écran, comme une appli.
 
+**Si la nouvelle version n'apparaît pas en ligne** au bout de quelques minutes, ouvre la page [Actions du dépôt](https://github.com/maxencebonnetcarrier-ship-it/atelier-boucherie/actions). Si la dernière mise en ligne (« pages build and deployment ») est annulée ou en échec, c'est souvent un incident GitHub (voir [githubstatus.com](https://www.githubstatus.com)). Une fois GitHub rétabli, ouvre cette mise en ligne et clique sur **Re-run all jobs**. Relancer `publier.sh` ne suffit pas : il n'envoie rien si le dossier `app/` n'a pas changé.
+
 Pour **mettre à jour** le site après une modification : commite, puis lance `bash outils/publier.sh`. Le site est servi depuis la branche `gh-pages`, qui ne contient que le dossier `app/`. Les deux photos des fiches de cours (squelette, comparatif) restent hors du dépôt (voir `.gitignore`).
 
 ## Organisation du dossier

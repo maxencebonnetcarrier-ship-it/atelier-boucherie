@@ -19,6 +19,16 @@ Double-clique sur `app/index.html`. Elle fonctionne sans internet et sans instal
 - **Comparatif** : c'est la fiche « Comparatif dénomination musculaire ». Clique sur une case pour surligner la région sur la planche.
 - **Adresse directe** : `index.html#boeuf/paleron` ouvre directement la fiche du paleron.
 
+## Sur le téléphone
+
+L'appli est en ligne à l'adresse **https://maxencebonnetcarrier-ship-it.github.io/atelier-boucherie/** (GitHub Pages, dépôt `maxencebonnetcarrier-ship-it/atelier-boucherie`).
+
+1. Ouvre le lien dans le navigateur du téléphone : Safari sur iPhone, Chrome sur Android.
+2. Ajoute l'appli à l'écran d'accueil. Sur iPhone : bouton Partager, puis « Sur l'écran d'accueil ». Sur Android : menu ⋮, puis « Ajouter à l'écran d'accueil ».
+3. L'icône « Boucherie » s'ouvre alors en plein écran, comme une appli.
+
+Pour **mettre à jour** le site après une modification : commite, puis lance `bash outils/publier.sh`. Le site est servi depuis la branche `gh-pages`, qui ne contient que le dossier `app/`. Les deux photos des fiches de cours (squelette, comparatif) restent hors du dépôt (voir `.gitignore`).
+
 ## Organisation du dossier
 
 | Chemin | Rôle |

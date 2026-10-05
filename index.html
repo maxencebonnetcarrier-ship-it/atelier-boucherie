@@ -28,7 +28,19 @@
 
   <main class="page" id="page">
     <section class="colonne-planche" id="vue-planche" aria-label="Planche de découpe">
-      <div class="planche" id="planche"></div>
+      <div class="planche" id="planche" role="application">
+        <p class="aide3d">Glisse pour tourner · touche une pièce</p>
+      </div>
+      <div class="outils3d" id="outils3d" aria-label="Orientation de l’animal">
+        <button type="button" data-vue="avant">Avant</button>
+        <button type="button" data-vue="profil">Profil</button>
+        <button type="button" data-vue="arriere">Arrière</button>
+        <button type="button" data-vue="dessus">Dessus</button>
+        <button type="button" data-noms aria-pressed="true">Noms</button>
+        <button type="button" data-zoom="1.25" aria-label="Zoomer">+</button>
+        <button type="button" data-zoom="0.8" aria-label="Dézoomer">−</button>
+      </div>
+      <div class="couleurs3d" id="couleurs3d" aria-label="Signification des couleurs"></div>
       <div class="legende" id="legende" aria-label="Filtrer par mode de cuisson"></div>
       <div class="liste-pieces" id="liste-pieces" aria-label="Toutes les pièces"></div>
     </section>
@@ -39,13 +51,15 @@
   <div class="bulle" id="bulle" hidden></div>
 
   <footer class="pied">
-    Planches et comparatif : supports de cours fournis (École des Métiers Bigard pour le comparatif).
+    Découpes reportées des planches de cours fournies ; comparatif : École des Métiers Bigard. Rendu 3D : three.js (licence MIT).
     Contenu pédagogique à valider avec ton formateur.
   </footer>
 
-  <script src="data/zones.js"></script>
+  <script src="vendor/three.min.js"></script>
+  <script src="data/modeles3d.js"></script>
   <script src="data/recettes.js"></script>
   <script src="data/pieces.js"></script>
+  <script src="vue3d.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

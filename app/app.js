@@ -1,13 +1,24 @@
-/* Atelier Boucherie — logique de l'interface (aucune dépendance, fonctionne en ouvrant index.html). */
+/* Atelier Boucherie — logique de l'interface (fonctionne en ouvrant index.html, sans réseau). */
 (function () {
   "use strict";
 
-  const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, ZONES } = window;
+  const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES } = window;
   const RAPIDES = ["griller", "poeler", "rotir", "sauter", "cru"];
   const LENTES = ["braiser", "bouillir"];
 
   const $ = (id) => document.getElementById(id);
-  const etat = { animal: ANIMAUX[0].id, piece: null, filtre: null, vue: "planche" };
+  const etat = { animal: ANIMAUX[0].id, piece: null, filtre: null, vue: "planche", montrer: true };
+
+  // Couleur d'une pièce sur le modèle 3D = sa famille de cuisson (même code pour les 4 animaux).
+  // Plusieurs nuances par famille, pour que deux pièces voisines ne se confondent pas.
+  const FAMILLES = {
+    rapide: ["#d9383c", "#ea5b50", "#c22b39", "#f07563", "#cf4a40", "#b3323d"],
+    lente: ["#8a2338", "#a3374a", "#741f36", "#b0464f", "#68203a", "#963244"],
+    mixte: ["#c9502e", "#dd6a3b", "#b4432a", "#e5814d"],
+    abat: ["#b8857f", "#a3716c", "#caa099"],
+  };
+  const TEINTE_FAMILLE = { rapide: "#d9383c", lente: "#8a2338", mixte: "#c9502e", abat: "#b8857f" };
+  const ATTENUE = "#e6ddd2";
 
   // ---------- utilitaires ----------
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -65,27 +76,72 @@
     nav.appendChild(c);
   }
 
-  function rendrePlanche() {
-    const z = ZONES[etat.animal];
-    const animal = ANIMAUX.find((a) => a.id === etat.animal);
-    const planche = $("planche");
-    planche.className = "planche" + (animal.fondSombre ? " sombre" : "") + (etat.filtre ? " filtre" : "");
-    const couleur = etat.filtre && etat.filtre.type === "cuisson" ? CUISSONS[etat.filtre.id].couleur : "#e0a800";
-    planche.style.setProperty("--c", hexAlpha(couleur, 0.5));
+  let vue3d = null;
+  const nuances = {};
 
-    const chemins = PIECES[etat.animal].map((p) => {
-      const zone = z.zones[p.id];
-      const cls = ["zone", p.id === etat.piece ? "active" : "", etat.filtre && correspond(p) ? "match" : ""].join(" ").trim();
-      return `<path class="${cls}" data-piece="${p.id}" d="${zone.d}" tabindex="0" role="button" aria-label="${esc(p.nom)}"></path>`;
-    }).join("");
-    planche.innerHTML =
-      `<img src="${z.image}" width="${z.largeur}" height="${z.hauteur}" alt="Planche de découpe : ${esc(animal.nom)}">` +
-      `<svg viewBox="0 0 ${z.largeur} ${z.hauteur}" preserveAspectRatio="none">${chemins}</svg>`;
+  function famille(piece) {
+    if (piece.abat) return "abat";
+    return typeCuisson(piece).cls;
   }
 
-  function hexAlpha(hex, a) {
-    const n = parseInt(hex.slice(1), 16);
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+  // Attribue les nuances une fois par animal : les pièces voisines d'une même famille diffèrent.
+  function nuancesDe(animal) {
+    if (nuances[animal]) return nuances[animal];
+    const voisins = vue3d.voisins();
+    const ids = window.MODELES3D[animal].pieces;
+    const ordre = ids.map((id, i) => i).sort((a, b) => voisins[b].length - voisins[a].length);
+    const res = {};
+    for (const i of ordre) {
+      const p = pieceDe(animal, ids[i]);
+      const f = famille(p);
+      const pris = new Set(voisins[i].filter((v) => res[v] && res[v].f === f).map((v) => res[v].k));
+      let k = 0;
+      while (pris.has(k)) k++;
+      res[ids[i]] = { f, k, couleur: FAMILLES[f][k % FAMILLES[f].length] };
+    }
+    return (nuances[animal] = res);
+  }
+
+  function couleursPieces() {
+    const n = nuancesDe(etat.animal);
+    const out = {};
+    for (const p of PIECES[etat.animal]) {
+      if (!etat.filtre) out[p.id] = n[p.id].couleur;
+      else if (!correspond(p)) out[p.id] = ATTENUE;
+      else out[p.id] = etat.filtre.type === "cuisson" ? CUISSONS[etat.filtre.id].couleur : "#d99a1e";
+    }
+    return out;
+  }
+
+  // Nom écrit sur la pièce en 3D : court, comme sur une planche (« Tende de tranche (poire, merlan) » → « Tende de tranche »).
+  function nomCourt(p) {
+    let n = p.nom.split(/[(,]/)[0].trim();
+    if (n.length > 16 && n.includes(" / ")) n = n.split(" / ")[0];
+    return n;
+  }
+
+  function rendre3D() {
+    if (!vue3d) {
+      vue3d = window.Vue3D($("planche"), { surClic: choisirSurModele, surSurvol: montrerBulle });
+      window.ATELIER3D = vue3d; // accès pour les tests automatiques
+    }
+    vue3d.afficher(etat.animal, Object.fromEntries(PIECES[etat.animal].map((p) => [p.id, nomCourt(p)])));
+    vue3d.etat({
+      couleurs: couleursPieces(), selection: etat.piece,
+      etiquettes: etat.filtre ? PIECES[etat.animal].filter(correspond).map((p) => p.id) : null,
+    });
+    if (etat.piece && etat.montrer) vue3d.focaliser(etat.piece);
+    etat.montrer = true;
+    $("planche").setAttribute("aria-label", `${nomAnimal(etat.animal)} en 3D : glisse pour le faire tourner, clique sur une pièce`);
+  }
+
+  function rendreCouleurs() {
+    const presentes = [...new Set(PIECES[etat.animal].map(famille))];
+    const noms = { rapide: "cuisson rapide", lente: "cuisson lente", mixte: "rapide ou lente", abat: "abat" };
+    $("couleurs3d").innerHTML = `<span class="titre">Couleurs :</span>` + ["rapide", "mixte", "lente", "abat"]
+      .filter((f) => presentes.includes(f))
+      .map((f) => `<span class="pastille" style="--c:${TEINTE_FAMILLE[f]}">${noms[f]}</span>`).join("")
+      + `<span class="pastille" style="--c:${window.Vue3D.ROBES[etat.animal]}">robe de l’animal (pas une pièce)</span>`;
   }
 
   function rendreLegende() {
@@ -125,7 +181,7 @@
       <h2>Clique sur une pièce</h2>
       <p>${esc(animal.intro)}</p>
       <div class="pas">
-        <div><b>1</b><span>Survole ou touche une zone de la planche (ou choisis dans la liste sous l’image).</span></div>
+        <div><b>1</b><span>Fais tourner l’animal en glissant, puis touche une pièce (ou choisis-la dans la liste).</span></div>
         <div><b>2</b><span>Lis son mode de cuisson, ce qu’on en fait au billot et le conseil à donner.</span></div>
         <div><b>3</b><span>Ouvre une recette simple à proposer au client.</span></div>
       </div>
@@ -201,12 +257,12 @@
       return `<tr><th>${esc(reg.titre)}${reg.note ? `<div class="note">${esc(reg.note)}</div>` : ""}</th>${cellules}</tr>`;
     }).join("");
     sec.innerHTML = `<h2>Comparatif des dénominations musculaires</h2>
-      <p>Une même région porte un nom différent selon l’animal. Clique sur une case pour voir la région surlignée sur la planche.</p>
+      <p>Une même région porte un nom différent selon l’animal. Clique sur une case pour voir la région surlignée sur l’animal en 3D.</p>
       <table class="tableau"><thead><tr><th>Région</th>${tete}</tr></thead><tbody>${lignes}</tbody></table>`;
   }
 
   function rendre() {
-    // La planche est redessinée : la bulle de survol de l'ancienne zone ne doit pas rester affichée.
+    // La vue est redessinée : la bulle de survol de l'ancienne pièce ne doit pas rester affichée.
     $("bulle").hidden = true;
     rendreOnglets();
     const comparatif = etat.vue === "comparatif";
@@ -215,7 +271,8 @@
     $("panneau").hidden = comparatif;
     $("vue-comparatif").hidden = !comparatif;
     if (comparatif) { rendreComparatif(); return; }
-    rendrePlanche();
+    rendre3D();
+    rendreCouleurs();
     rendreLegende();
     rendreListe();
     rendrePanneau();
@@ -229,25 +286,29 @@
     }
   }
 
+  // Clic sur le modèle : la pièce est déjà sous les yeux, on ne fait pas tourner la caméra.
+  function choisirSurModele(id) {
+    etat.montrer = false;
+    choisir(id);
+  }
+
   const bulle = $("bulle");
-  $("planche").addEventListener("click", (e) => {
-    const z = e.target.closest(".zone");
-    if (z) choisir(z.dataset.piece);
-  });
-  $("planche").addEventListener("keydown", (e) => {
-    const z = e.target.closest(".zone");
-    if (z && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); choisir(z.dataset.piece); }
-  });
-  $("planche").addEventListener("pointermove", (e) => {
-    const z = e.target.closest(".zone");
-    if (!z || e.pointerType === "touch") { bulle.hidden = true; return; }
-    const p = pieceDe(etat.animal, z.dataset.piece);
+  function montrerBulle(id, x, y) {
+    const p = id && pieceDe(etat.animal, id);
+    if (!p || x === undefined) { bulle.hidden = true; return; }
     bulle.textContent = p.nom;
-    bulle.style.left = e.clientX + "px";
-    bulle.style.top = e.clientY + "px";
+    bulle.style.left = x + "px";
+    bulle.style.top = y + "px";
     bulle.hidden = false;
+  }
+
+  $("outils3d").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b || !vue3d) return;
+    if (b.dataset.vue) vue3d.vue(b.dataset.vue);
+    if (b.dataset.zoom) vue3d.zoomer(parseFloat(b.dataset.zoom));
+    if (b.hasAttribute("data-noms")) b.setAttribute("aria-pressed", String(vue3d.noms(b.getAttribute("aria-pressed") !== "true")));
   });
-  $("planche").addEventListener("pointerleave", () => { bulle.hidden = true; });
 
   $("legende").addEventListener("click", (e) => {
     const b = e.target.closest("[data-filtre]");

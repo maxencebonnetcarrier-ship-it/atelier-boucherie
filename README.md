@@ -1,6 +1,6 @@
 # Atelier Boucherie
 
-Appli pour apprendre la boucherie ou se perfectionner. Tu cliques sur une pièce d'un animal et elle t'affiche :
+Appli pour apprendre la boucherie ou se perfectionner. Les quatre animaux sont en **3D, tous dans le même style** : tu les fais tourner, tu touches une pièce et l'appli t'affiche :
 
 - son **mode de cuisson** : griller, poêler, rôtir, sauter, braiser / mijoter, bouillir / pocher, cru ;
 - ce qu'il faut **savoir** sur la pièce (où elle se trouve, ses caractéristiques) ;
@@ -14,9 +14,12 @@ Contenu : 4 animaux (bœuf, veau, porc, agneau), 69 pièces et 54 recettes.
 
 Double-clique sur `app/index.html`. Elle fonctionne sans internet et sans installation, dans n'importe quel navigateur.
 
-- **Filtre par cuisson** : « Voir les pièces à : Braiser » colore sur la planche toutes les pièces à braiser.
-- **Liste sous la planche** : sert pour les petites zones (onglet, hampe, araignée…), plus faciles à choisir là.
-- **Comparatif** : c'est la fiche « Comparatif dénomination musculaire ». Clique sur une case pour surligner la région sur la planche.
+- **Tourner l'animal** : glisse à la souris ou au doigt (de gauche à droite). Les boutons Avant, Profil, Arrière et Dessus donnent les vues classiques ; + et − zooment.
+- **Couleurs** : rouge vif = cuisson rapide, bordeaux = cuisson lente, orangé = les deux, rosé = abat. Ce qui n'est pas une pièce garde la robe de l'animal (bœuf fauve, veau crème : tête et bas des pattes). Les traits clairs sont les lignes de découpe.
+- **Noms** : le nom de chaque pièce est écrit dessus, comme sur une planche. Le bouton « Noms » les masque. Quand deux noms se chevauchent, le plus petit est caché : tourne l'animal ou zoome pour le voir.
+- **Filtre par cuisson** : « Voir les pièces à : Braiser » colore toutes les pièces à braiser et grise les autres.
+- **Liste sous l'animal** : choisir une pièce dans la liste fait **tourner l'animal** pour te la montrer (pratique pour les petites pièces : onglet, hampe, araignée…).
+- **Comparatif** : c'est la fiche « Comparatif dénomination musculaire ». Clique sur une case pour surligner la région sur l'animal.
 - **Adresse directe** : `index.html#boeuf/paleron` ouvre directement la fiche du paleron.
 
 ## Sur le téléphone
@@ -33,37 +36,42 @@ Pour **mettre à jour** le site après une modification : commite, puis lance `b
 
 | Chemin | Rôle |
 |---|---|
-| `app/` | L'appli : `index.html`, `styles.css`, `app.js` |
+| `app/` | L'appli : `index.html`, `styles.css`, `app.js` (interface) et `vue3d.js` (affichage 3D) |
 | `app/data/pieces.js` | Fiches des pièces, modes de cuisson, régions du comparatif. **C'est ici qu'on corrige ou complète le contenu.** |
 | `app/data/recettes.js` | Les recettes. Les pièces y renvoient par leur identifiant. |
-| `app/data/zones.js` | Les zones cliquables. Ce fichier est **généré**, ne pas le modifier à la main. |
-| `app/img/` | Les planches telles qu'elles apparaissent dans l'appli. |
-| `sources/` | Tes images d'origine (planches, squelette, comparatif). |
-| `outils/` | Les scripts de génération et de vérification. |
+| `app/data/modeles3d.js` | Les modèles 3D et la carte des pièces de chaque animal. Ce fichier est **généré**, ne pas le modifier à la main. |
+| `app/vendor/three.min.js` | Three.js r160, le moteur 3D (licence MIT, copiée à côté), embarqué pour marcher sans internet. |
+| `sources/` | Tes images d'origine (planches, squelette, comparatif). Les planches servent de guide pour placer les découpes. |
+| `outils/` | Les scripts de fabrication des modèles et de vérification. |
 
 ## Modifier le contenu
 
 1. Modifie `app/data/pieces.js` ou `app/data/recettes.js`.
-2. Lance `node outils/verifier.mjs`. Ce contrôle vérifie que chaque zone a sa fiche et que chaque fiche est complète (cuisson, transformations, recettes existantes). Il vérifie aussi qu'un clic au centre d'une zone tombe bien sur la bonne pièce.
-3. Lance `node outils/test-clic.mjs`. Ce test ouvre l'appli dans Edge ou Chrome, sans fenêtre, et clique réellement sur les 69 pièces. Il teste aussi le filtre, le comparatif et l'affichage téléphone, puis enregistre des captures dans `outils/captures/`.
+2. Lance `node outils/verifier.mjs`. Ce contrôle vérifie que chaque pièce du modèle 3D a sa fiche et inversement, que chaque fiche est complète (cuisson, transformations, recettes existantes) et que chaque pièce est assez grande pour être touchée.
+3. Lance `node outils/test-clic.mjs`. Ce test ouvre l'appli dans Edge ou Chrome, sans fenêtre : pour chacune des 69 pièces, il tourne l'animal vers elle et clique réellement dessus. Il teste aussi le survol, la rotation, la liste, le filtre, le comparatif et le toucher sur téléphone, puis enregistre des captures dans `outils/captures/`.
 
-## Changer une planche ou en ajouter une
+## Comment les modèles 3D sont fabriqués
 
-Les zones sont découpées **automatiquement** à partir des images de `sources/`. Le script `outils/zones.py` repère chaque zone colorée grâce à un point posé à l'intérieur (une « graine »), puis la transforme en forme cliquable.
+1. **Les formes** (`outils/formes.py`) : chaque animal est sculpté en assemblant des volumes arrondis (tronc, cuisses, épaules, cou, tête, pattes). Les quatre utilisent le même vocabulaire de formes, d'où le style commun. Chaque animal porte aussi ses **repères anatomiques** (museau, garrot, hanche, jarret…).
+2. **Les découpes** (`outils/zones.py`) : le découpage de chaque planche de `sources/` est lu automatiquement, à partir d'un point posé dans chaque pièce (une « graine »).
+3. **Le report** (`outils/modeles3d.py`) : la planche est déformée pour que ses repères tombent sur ceux du modèle. Chaque pièce se retrouve ainsi à sa place sur le corps 3D, vu de profil. Le script fabrique ensuite la surface, l'allège à 16 000 triangles par animal et écrit `app/data/modeles3d.js`.
 
 ```
-pip install opencv-python-headless numpy
-python outils/zones.py
+pip install opencv-python-headless numpy scikit-image fast-simplification
+python outils/zones.py          # découpage des planches
+python outils/modeles3d.py      # modèles 3D (ou : python outils/modeles3d.py porc)
+node outils/apercu.mjs boeuf depart profil avant arriere dessus   # captures 3D
 ```
 
-- `outils/controle/<animal>.png` montre le découpage obtenu : chaque pièce y est colorée et nommée. Regarde-le après chaque génération.
-- Pour trouver les coordonnées d'une nouvelle graine, utilise `python outils/composantes.py <image> <mode> <sortie.png> 3`. Ce script numérote les zones détectées.
-- Une zone que la planche ne ferme pas (pointillés trop espacés, partie trop fine) se trace à la main dans la rubrique `manuel` de `zones.py`.
+- `outils/controle/carte_<animal>.png` montre les pièces reportées sur le profil du modèle, avec les repères en rouge. Regarde-le après chaque génération.
+- `python outils/modeles3d.py apercu <animal>` dessine la silhouette quadrillée d'un modèle. C'est utile pour placer un repère.
+- Si une pièce tombe mal, déplace le repère concerné : dans `formes.py` côté modèle, dans `REPERES_PLANCHE` (`modeles3d.py`) côté planche. Pour le bas des pattes, une règle directe se met dans `CORRECTIONS`.
 
 ## Points à vérifier avec ton formateur
 
 - Le contenu (cuissons, transformations, recettes) a été rédigé pour l'appli : **fais-le relire**.
 - **Porc** : une petite zone sans nom, sous le travers, a été rattachée à la **poitrine** (hypothèse).
-- **Agneau** : la gravure est ancienne et ses pointillés sont ouverts. Le haut de côtelettes et les pieds sont donc tracés à la main, avec des contours approximatifs.
+- **Agneau** : la gravure est ancienne et ses pointillés sont ouverts. Le haut de côtelettes et les pieds sont donc tracés à la main, avec des contours approximatifs. Sur la gravure, l'agneau broute : sa tête et son collet sont reportés sur un agneau debout.
+- **Modèles 3D** : ce sont des animaux **stylisés**, pas des modèles anatomiques. Les découpes sont reportées des planches, vues de profil : les frontières entre pièces sont donc approximatives, surtout sur le dessus du dos et sous le ventre.
 - **Comparatif** : la fiche place le **merlan** dans l'épaule du bœuf, alors que la planche du bœuf le met dans la cuisse (avec la tende de tranche). L'appli recopie la fiche telle quelle.
-- **Droits** : l'image du porc est une image Adobe Stock avec filigrane (n° 396567493). Elle convient pour un usage personnel, mais il faudra la remplacer si l'appli est publiée.
+- **Droits** : l'image du porc est une image Adobe Stock avec filigrane (n° 396567493). Elle **n'est plus affichée** dans l'appli : seul son découpage sert de guide. Mais elle est encore présente dans `sources/`, donc dans le dépôt public.

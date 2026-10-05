@@ -1,12 +1,12 @@
 // Contenu pédagogique : animaux, modes de cuisson, régions du comparatif et fiches des pièces.
-// Chaque pièce a un identifiant qui doit exister dans data/zones.js (zone cliquable) ;
+// Chaque pièce a un identifiant qui doit exister dans le modèle 3D de son animal (data/modeles3d.js) ;
 // le test outils/verifier.mjs le contrôle.
 
 window.ANIMAUX = [
   { id: "boeuf", nom: "Bœuf", intro: "29 pièces, de la langue au gîte. L’aloyau (faux-filet, filet) et la cuisse donnent les pièces à griller ; l’avant et le bas donnent les viandes à braiser et à bouillir." },
   { id: "veau", nom: "Veau", intro: "Viande claire et tendre, toujours servie à point. La cuisse (noix) et la longe sont les morceaux nobles ; collier, poitrine et tendron font les blanquettes." },
   { id: "porc", nom: "Porc", intro: "Tout est bon dans le cochon : grillades dans le dos, rôtis dans le jambon et le filet, demi-sel et charcuterie avec l’avant, la poitrine et les extrémités." },
-  { id: "agneau", nom: "Agneau", fondSombre: true, intro: "Gigot, carré et filet pour rôtir et griller ; épaule, collet et poitrine pour les cuissons longues (navarin, tajine)." },
+  { id: "agneau", nom: "Agneau", intro: "Gigot, carré et filet pour rôtir et griller ; épaule, collet et poitrine pour les cuissons longues (navarin, tajine)." },
 ];
 
 // Modes de cuisson : couleur (filtre sur la planche) et définition courte.

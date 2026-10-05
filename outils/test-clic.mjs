@@ -1,176 +1,174 @@
 // Test de bout en bout : ouvre l'appli dans un navigateur sans fenêtre (Edge ou Chrome),
-// CLIQUE réellement au centre de chaque pièce de chaque animal et vérifie que la bonne fiche
-// s'affiche. Teste aussi le filtre par cuisson et le comparatif, puis enregistre des captures.
-// Usage : node outils/test-clic.mjs   (code de sortie 0 = tout est bon)
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+// fait tourner chaque animal 3D vers chaque pièce et CLIQUE réellement dessus, puis vérifie
+// que la bonne fiche s'ouvre. Teste aussi le survol, la rotation à la souris, le filtre par
+// cuisson, le comparatif, la liste et l'affichage téléphone, et enregistre des captures.
+// Usage : node outils/test-clic.mjs [url]   (code de sortie 0 = tout est bon)
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
+import { lancer, attendre } from "./navigateur.mjs";
 
 const RACINE = dirname(dirname(fileURLToPath(import.meta.url)));
 const APP = join(RACINE, "app");
 const CAPTURES = join(RACINE, "outils", "captures");
-const URL_APP = pathToFileURL(join(APP, "index.html")).href;
-const PORT = 9337;
-
-const NAVIGATEURS = [
-  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-  "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
-  "C:/Program Files/Google/Chrome/Application/chrome.exe",
-];
-const exe = NAVIGATEURS.find(existsSync);
-if (!exe) { console.error("Aucun navigateur Edge/Chrome trouvé."); process.exit(2); }
+const URL_APP = process.argv[2] || pathToFileURL(join(APP, "index.html")).href;
 
 // Données de référence (lues comme le fait la page).
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/zones.js", "data/recettes.js", "data/pieces.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
-const { ANIMAUX, PIECES, ZONES, REGIONS } = ctx.window;
-
-const profil = mkdtempSync(join(tmpdir(), "atelier-boucherie-"));
-const nav = spawn(exe, ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profil}`,
-  "--no-first-run", "--disable-extensions", "--allow-file-access-from-files", "--window-size=1400,1000", "about:blank"], { stdio: "ignore" });
-
-const attendre = (ms) => new Promise((r) => setTimeout(r, ms));
-async function cible() {
-  for (let i = 0; i < 50; i++) {
-    try {
-      const l = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-      const p = l.find((t) => t.type === "page");
-      if (p) return p.webSocketDebuggerUrl;
-    } catch { /* pas encore prêt */ }
-    await attendre(200);
-  }
-  throw new Error("le navigateur ne répond pas sur le port de débogage");
-}
-
-let ws, seq = 0;
-const enAttente = new Map();
-function cdp(method, params = {}) {
-  const id = ++seq;
-  ws.send(JSON.stringify({ id, method, params }));
-  return new Promise((ok, ko) => enAttente.set(id, { ok, ko }));
-}
-async function evaluer(expr) {
-  const r = await cdp("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
-  if (r.exceptionDetails) throw new Error("erreur JS : " + JSON.stringify(r.exceptionDetails.exception?.description || r.exceptionDetails.text));
-  return r.result.value;
-}
-async function aller(hash) {
-  await cdp("Page.navigate", { url: URL_APP + hash });
-  for (let i = 0; i < 50; i++) {
-    if (await evaluer("document.readyState === 'complete' && !!document.querySelector('#onglets button')").catch(() => false)) return;
-    await attendre(100);
-  }
-  throw new Error("la page ne se charge pas : " + hash);
-}
-async function cliquer(x, y) {
-  for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
-    await cdp("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: type === "mouseMoved" ? 0 : 1 });
-  }
-  await attendre(60);
-}
-async function capture(nom) {
-  const r = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-  mkdirSync(CAPTURES, { recursive: true });
-  writeFileSync(join(CAPTURES, nom), Buffer.from(r.data, "base64"));
-}
-// Amène un point de la planche (en pixels de l'image) au milieu de l'écran et rend ses coordonnées écran.
-async function pointEcran(animal, [cx, cy]) {
-  const larg = ZONES[animal].largeur;
-  const js = (scroll) => `(() => { const r = document.querySelector('#planche img').getBoundingClientRect();
-    const k = r.width / ${larg}; const x = r.left + ${cx + 0.5} * k, y = r.top + ${cy + 0.5} * k;
-    ${scroll ? "window.scrollBy(0, y - innerHeight / 2);" : ""} return [x, y]; })()`;
-  await evaluer(js(true));
-  await attendre(30);
-  return evaluer(js(false));
-}
+for (const f of ["data/recettes.js", "data/pieces.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
+const { ANIMAUX, PIECES } = ctx.window;
 
 const erreurs = [];
 let clics = 0;
-try {
-  ws = new WebSocket(await cible());
-  await new Promise((ok, ko) => { ws.onopen = ok; ws.onerror = ko; });
-  ws.onmessage = (m) => {
-    const d = JSON.parse(m.data);
-    if (d.id && enAttente.has(d.id)) { const p = enAttente.get(d.id); enAttente.delete(d.id); d.error ? p.ko(new Error(d.error.message)) : p.ok(d.result); }
-  };
-  await cdp("Page.enable");
-  await cdp("Runtime.enable");
-  await cdp("Emulation.setDeviceMetricsOverride", { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false });
+const nav = await lancer({ largeur: 1400, hauteur: 1000, port: 9337 });
+const pret = "document.readyState === 'complete' && !!window.ATELIER3D";
+const aller = (hash) => nav.aller(URL_APP + hash, pret);
+const lire = (expr) => nav.evaluer(expr);
 
-  // 1. Un clic au centre de chaque pièce ouvre la bonne fiche.
+try {
+  // 1. Pour chaque pièce : la caméra la montre, on clique dessus, la bonne fiche s'ouvre.
   for (const a of ANIMAUX) {
     await aller("#" + a.id);
+    await attendre(300);
+    // l'animal est bien dessiné (pas un cadre vide) : beaucoup de pixels rouges sur la toile
+    const rouge = await lire(`(() => { const c = document.querySelector('#planche canvas'); const t = document.createElement('canvas');
+      t.width = 200; t.height = 125; const x = t.getContext('2d'); x.drawImage(c, 0, 0, 200, 125);
+      const d = x.getImageData(0, 0, 200, 125).data; let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] > d[i + 1] + 50 && d[i + 3] > 0) n++; return n / (200 * 125); })()`);
+    if (!(rouge > 0.12)) erreurs.push(`${a.id} : l'animal 3D ne s'affiche pas (${(rouge * 100).toFixed(1)} % de pixels de viande)`);
     for (const p of PIECES[a.id]) {
-      const [x, y] = await pointEcran(a.id, ZONES[a.id].zones[p.id].centre);
-      await cliquer(x, y);
+      const pt = await lire(`window.ATELIER3D.pointEcran(${JSON.stringify(p.id)})`);
+      if (!pt) { erreurs.push(`${a.id}/${p.id} : aucun point visible`); continue; }
+      await attendre(30);
+      await nav.cliquer(pt[0], pt[1]);
       clics++;
-      const [hash, titre, bulleCachee] = await evaluer("[location.hash, (document.querySelector('#panneau h2')||{}).textContent, document.getElementById('bulle').hidden]");
-      if (hash !== `#${a.id}/${p.id}` || titre !== p.nom) erreurs.push(`${a.id}/${p.id} : clic → ${hash} « ${titre} »`);
-      if (!bulleCachee) erreurs.push(`${a.id}/${p.id} : la bulle de survol reste affichée après le clic`);
+      const [hash, titre] = await lire("[location.hash, (document.querySelector('#panneau h2')||{}).textContent]");
+      if (hash !== `#${a.id}/${p.id}` || titre !== p.nom) erreurs.push(`${a.id}/${p.id} : clic en (${pt.map(Math.round)}) → ${hash} « ${titre} »`);
     }
   }
 
-  // 2. Le panneau d'une pièce montre cuissons, transformations et recettes.
+  // 2. Survol à la souris : la bulle donne le nom de la pièce.
+  await aller("#boeuf");
+  await attendre(200);
+  const ptPal = await lire(`window.ATELIER3D.pointEcran("paleron")`);
+  await nav.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: ptPal[0], y: ptPal[1] });
+  await attendre(120);
+  const bulle = await lire("[document.getElementById('bulle').hidden, document.getElementById('bulle').textContent]");
+  if (bulle[0] || bulle[1] !== "Paleron") erreurs.push(`survol du paleron : bulle ${JSON.stringify(bulle)}`);
+
+  // 2 bis. Noms écrits sur les pièces : affichés, sans chevauchement, et masquables par le bouton « Noms ».
+  const noms = await lire("window.ATELIER3D.nomsAffiches()");
+  if (noms.length < 10) erreurs.push(`bœuf vue de départ : seulement ${noms.length} noms écrits sur les pièces`);
+  const chevauche = await lire(`(() => { const r = [...document.querySelectorAll('.etiquettes3d span')]
+    .filter((s) => s.style.visibility === 'visible').map((s) => s.getBoundingClientRect());
+    for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++)
+      if (r[i].left < r[j].right - 1 && r[i].right > r[j].left + 1 && r[i].top < r[j].bottom - 1 && r[i].bottom > r[j].top + 1) return true;
+    return false; })()`);
+  if (chevauche) erreurs.push("des noms se chevauchent sur le bœuf");
+  await lire(`document.querySelector('#outils3d [data-noms]').click()`);
+  await attendre(150);
+  const sansNoms = await lire("[window.ATELIER3D.nomsAffiches().length, document.querySelector('#outils3d [data-noms]').getAttribute('aria-pressed')]");
+  if (sansNoms[0] !== 0 || sansNoms[1] !== "false") erreurs.push(`bouton Noms : ${JSON.stringify(sansNoms)}`);
+  await lire(`document.querySelector('#outils3d [data-noms]').click()`);
+  await attendre(150);
+
+  // 3. Glisser à la souris fait tourner l'animal, sans sélectionner de pièce.
+  const avant = await lire("window.ATELIER3D.orientation().az");
+  await nav.glisser(ptPal[0], ptPal[1], ptPal[0] + 220, ptPal[1]);
+  const apres = await lire("[window.ATELIER3D.orientation().az, location.hash]");
+  if (Math.abs(apres[0] - avant) < 1) erreurs.push(`glisser ne fait pas tourner l'animal (az ${avant} → ${apres[0]})`);
+  if (apres[1] !== "#boeuf") erreurs.push(`glisser a sélectionné une pièce (${apres[1]})`);
+
+  // 4. Fiche complète : cuissons, transformations, recettes, équivalences.
   await aller("#boeuf/paleron");
-  const contenu = await evaluer(`({ cuissons: document.querySelectorAll('#panneau .cuissons .puce').length,
+  await attendre(700);
+  const contenu = await lire(`({ cuissons: document.querySelectorAll('#panneau .cuissons .puce').length,
     transfo: document.querySelectorAll('#panneau .transfo li').length,
     recettes: document.querySelectorAll('#panneau details.recette').length,
     ouverte: !!document.querySelector('#panneau details.recette[open]'),
-    equiv: document.querySelectorAll('#panneau .equivalences a').length })`);
+    equiv: document.querySelectorAll('#panneau .equivalences a').length,
+    selection: window.ATELIER3D.etatCourant().selection })`);
+  const nomSel = await lire(`(() => { const s = document.querySelector('.etiquettes3d span.actif'); return s && s.style.visibility === 'visible' ? s.dataset.piece : null; })()`);
+  if (nomSel !== "paleron") erreurs.push(`le nom de la pièce choisie n'est pas affiché (${nomSel})`);
   const pal = PIECES.boeuf.find((p) => p.id === "paleron");
   if (contenu.cuissons !== pal.cuissons.length || contenu.transfo !== pal.transformations.length
-    || contenu.recettes !== pal.recettes.length || !contenu.ouverte || contenu.equiv < 3) {
-    erreurs.push("panneau paleron incomplet : " + JSON.stringify(contenu));
+    || contenu.recettes !== pal.recettes.length || !contenu.ouverte || contenu.equiv < 3 || contenu.selection !== "paleron") {
+    erreurs.push("fiche paleron incomplète : " + JSON.stringify(contenu));
   }
-  await evaluer("window.scrollTo(0,0)");
-  await capture("1-boeuf-paleron.png");
-  await aller("#veau/longe");
-  await evaluer("window.scrollTo(0,0)");
-  await capture("6-veau-longe.png");
+  await lire("window.scrollTo(0,0)");
+  await nav.capture(join(CAPTURES, "1-boeuf-paleron.png"));
 
-  // 3. Filtre « Braiser » : seules les pièces à braiser sont surlignées.
+  // 5. Choisir dans la liste fait tourner l'animal vers la pièce.
+  await aller("#boeuf");
+  await attendre(200);
+  const az0 = await lire("window.ATELIER3D.orientation().az");
+  await lire(`document.querySelector('#liste-pieces [data-piece="rond-de-gite"]').click()`);
+  await attendre(900);
+  const [az1, selListe] = await lire("[window.ATELIER3D.orientation().az, window.ATELIER3D.etatCourant().selection]");
+  if (selListe !== "rond-de-gite" || Math.abs(az1 - az0) < 0.3) erreurs.push(`liste → rond de gîte : sélection ${selListe}, rotation ${az0.toFixed(2)} → ${az1.toFixed(2)}`);
+  await nav.capture(join(CAPTURES, "2-boeuf-rond-de-gite.png"));
+
+  // 6. Filtre « Braiser » sur le porc : pièces à braiser colorées, les autres atténuées.
   await aller("#porc");
-  await evaluer(`document.querySelector('#legende [data-filtre="braiser"]').click()`);
-  const surlignees = await evaluer("document.querySelectorAll('#planche .zone.match').length");
-  const attendues = PIECES.porc.filter((p) => p.cuissons.includes("braiser")).length;
-  if (surlignees !== attendues) erreurs.push(`filtre braiser porc : ${surlignees} zones surlignées au lieu de ${attendues}`);
-  await capture("2-porc-filtre-braiser.png");
+  await attendre(200);
+  await lire(`document.querySelector('#legende [data-filtre="braiser"]').click()`);
+  await attendre(300);
+  const coul = await lire("window.ATELIER3D.etatCourant().couleurs");
+  const aBraiser = PIECES.porc.filter((p) => p.cuissons.includes("braiser")).map((p) => p.id);
+  const faux = PIECES.porc.filter((p) => (coul[p.id] === "#e6ddd2") === aBraiser.includes(p.id)).map((p) => p.id);
+  if (faux.length) erreurs.push(`filtre braiser porc : couleurs incohérentes pour ${faux.join(", ")}`);
+  const nomsFiltre = await lire("window.ATELIER3D.nomsAffiches()");
+  const intrus = nomsFiltre.filter((id) => !aBraiser.includes(id));
+  if (intrus.length || !nomsFiltre.length) erreurs.push(`filtre braiser porc : noms écrits ${nomsFiltre} (intrus : ${intrus})`);
+  await nav.capture(join(CAPTURES, "3-porc-filtre-braiser.png"));
 
-  // 4. Comparatif : un clic sur « Veau / épaule » ouvre le veau avec la région surlignée.
+  // 7. Comparatif : la case « Veau / épaule » ouvre le veau avec la région surlignée.
   await aller("#comparatif");
-  await capture("3-comparatif.png");
-  const [bx, by] = await evaluer(`(() => { const b = document.querySelector('[data-region="epaule"][data-animal="veau"]');
+  await nav.capture(join(CAPTURES, "4-comparatif.png"));
+  const [bx, by] = await lire(`(() => { const b = document.querySelector('[data-region="epaule"][data-animal="veau"]');
     b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.left + 20, r.top + 10]; })()`);
-  await cliquer(bx, by);
-  await attendre(100);
-  const [hashC, regionC] = await evaluer("[location.hash, document.querySelectorAll('#planche .zone.match').length]");
-  const attenduC = PIECES.veau.filter((p) => p.region === "epaule").length;
-  if (hashC !== "#veau" || regionC !== attenduC) erreurs.push(`comparatif → ${hashC}, ${regionC} zones au lieu de #veau, ${attenduC}`);
+  await nav.cliquer(bx, by);
+  await attendre(300);
+  const [hashC, coulC] = await lire("[location.hash, window.ATELIER3D.etatCourant().couleurs]");
+  const regionVeau = PIECES.veau.filter((p) => p.region === "epaule").map((p) => p.id);
+  const surlignees = Object.entries(coulC).filter(([, c]) => c === "#d99a1e").map(([id]) => id).sort();
+  if (hashC !== "#veau" || surlignees.join() !== [...regionVeau].sort().join()) {
+    erreurs.push(`comparatif → ${hashC}, surlignées ${surlignees} au lieu de ${regionVeau}`);
+  }
+  await lire("window.scrollTo(0,0)");
+  await nav.capture(join(CAPTURES, "5-veau-region-epaule.png"));
 
-  // 5. Affichage téléphone : la fiche s'affiche sous la planche.
-  await cdp("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+  // 8. Agneau, et affichage téléphone.
   await aller("#agneau/gigot");
-  await evaluer("window.scrollTo(0,0)");
-  await capture("4-mobile-agneau.png");
-  await evaluer("document.querySelector('#panneau').scrollIntoView()");
-  await capture("5-mobile-agneau-fiche.png");
-  void REGIONS;
+  await attendre(800);
+  await lire("window.scrollTo(0,0)");
+  await nav.capture(join(CAPTURES, "6-agneau-gigot.png"));
+  await nav.taille(390, 844, true, 2);
+  await aller("#porc/jambon");
+  await attendre(800);
+  await lire("window.scrollTo(0,0)");
+  await nav.capture(join(CAPTURES, "7-mobile-porc.png"));
+  const ptMobile = await lire(`window.ATELIER3D.pointEcran("echine")`);
+  await nav.cdp("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: ptMobile[0], y: ptMobile[1] }] });
+  await nav.cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await attendre(400);
+  const hashMobile = await lire("location.hash");
+  if (hashMobile !== "#porc/echine") erreurs.push(`toucher du doigt sur l'échine (téléphone) → ${hashMobile}`);
+  await lire("document.querySelector('#panneau').scrollIntoView()");
+  await nav.capture(join(CAPTURES, "8-mobile-porc-fiche.png"));
+
+  if (nav.journal.length) erreurs.push("erreurs JavaScript dans la page :\n   " + nav.journal.join("\n   "));
 } catch (e) {
   erreurs.push("exception : " + e.message);
 } finally {
-  try { await cdp("Browser.close"); } catch { /* déjà fermé */ }
-  await attendre(300);
-  try { nav.kill(); } catch { /* déjà fermé */ }
-  try { rmSync(profil, { recursive: true, force: true }); } catch { /* fichiers encore verrouillés */ }
+  await nav.fermer();
 }
 
 if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) sur ${clics} clics :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${clics} pièces cliquées, chacune ouvre la bonne fiche ; filtre, comparatif et vue téléphone vérifiés. Captures : outils/captures/`);
+console.log(`OK — ${clics} pièces cliquées sur les animaux 3D, chacune ouvre la bonne fiche ; survol, rotation, liste, filtre, comparatif et téléphone vérifiés. Captures : outils/captures/`);
 process.exit(0);

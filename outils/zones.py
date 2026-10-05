@@ -6,7 +6,8 @@
 # grossir de quelques pixels pour couvrir les traits de séparation, on bouche les trous
 # laissés par le texte, puis on vectorise le contour.
 #
-# Usage : python outils/zones.py            -> écrit app/data/zones.js + app/img/* + outils/controle/*.png
+# Usage : python outils/zones.py   -> outils/cache/etiquettes_<animal>.npz (carte des pièces de chaque planche,
+#          reportée ensuite sur les modèles 3D par outils/modeles3d.py) + outils/controle/<animal>.png
 import json
 import os
 import sys
@@ -18,6 +19,7 @@ RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(RACINE, "sources")
 APP = os.path.join(RACINE, "app")
 CONTROLE = os.path.join(RACINE, "outils", "controle")
+CACHE = os.path.join(RACINE, "outils", "cache")
 
 # Graines = points (x, y) en pixels de l'image source, à l'intérieur de chaque pièce.
 # Plusieurs graines = une pièce dessinée en plusieurs morceaux (texte qui coupe la zone, etc.).
@@ -242,10 +244,10 @@ def traiter(nom, cfg):
         for c in range(3):
             canal = sortie[:, :, c]
             canal[clair] = gris[clair]
-    ext = os.path.splitext(cfg["image"])[1]
-    os.makedirs(os.path.join(APP, "img"), exist_ok=True)
-    params = [cv2.IMWRITE_JPEG_QUALITY, 92] if ext == ".jpg" else []
-    cv2.imencode(ext, sortie, params)[1].tofile(os.path.join(APP, "img", cfg["image"]))
+    # Carte des pièces de la planche (une étiquette par pixel, -1 = hors pièce) : reprise par
+    # modeles3d.py, qui la reporte sur le profil des modèles 3D.
+    os.makedirs(CACHE, exist_ok=True)
+    np.savez_compressed(os.path.join(CACHE, f"etiquettes_{nom}.npz"), L=L.astype(np.int16), ids=np.array(ids))
 
     # Image de contrôle : chaque pièce colorée + son identifiant.
     vis = cv2.cvtColor(sortie, cv2.COLOR_BGRA2BGR) if sortie.ndim == 3 and sortie.shape[2] == 4 else sortie.copy()
@@ -272,12 +274,8 @@ def traiter(nom, cfg):
 
 def main():
     toutes = {nom: traiter(nom, cfg) for nom, cfg in PLANCHES.items()}
-    js = ("// Fichier GÉNÉRÉ par outils/zones.py — ne pas modifier à la main.\n"
-          "// Zones cliquables (chemins SVG en pixels de l'image) de chaque planche.\n"
-          "window.ZONES = " + json.dumps(toutes, ensure_ascii=False, indent=1) + ";\n")
-    os.makedirs(os.path.join(APP, "data"), exist_ok=True)
-    with open(os.path.join(APP, "data", "zones.js"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(js)
+    with open(os.path.join(CACHE, "zones.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump(toutes, f, ensure_ascii=False)
     return 0
 
 

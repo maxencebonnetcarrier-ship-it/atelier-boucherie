@@ -6,3 +6,6 @@ __pycache__/
 # Photos des fiches de cours : inutiles à l'appli, gardées hors du dépôt public
 sources/Comparaison*
 sources/squelette*
+
+# Fichiers intermédiaires de la fabrication des modèles 3D (régénérés par zones.py)
+outils/cache/

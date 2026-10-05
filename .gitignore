@@ -1,0 +1,8 @@
+# Sorties des tests et du découpage (régénérées à chaque lancement)
+outils/captures/
+outils/controle/
+__pycache__/
+
+# Photos des fiches de cours : inutiles à l'appli, gardées hors du dépôt public
+sources/Comparaison*
+sources/squelette*

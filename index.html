@@ -38,7 +38,9 @@
         <button type="button" data-vue="dessus">Dessus</button>
         <button type="button" data-noms aria-pressed="true">Noms</button>
         <button type="button" data-squelette aria-pressed="false" hidden>Squelette</button>
+        <button type="button" data-muscles aria-pressed="false" hidden>Muscles</button>
         <button type="button" data-eclater aria-pressed="false" hidden>Éclater</button>
+        <button type="button" data-plein aria-pressed="false">Plein écran</button>
         <button type="button" data-zoom="1.25" aria-label="Zoomer">+</button>
         <button type="button" data-zoom="0.8" aria-label="Dézoomer">−</button>
       </div>
@@ -53,9 +55,9 @@
   <div class="bulle" id="bulle" hidden></div>
 
   <footer class="pied">
-    Découpes reportées des planches de cours fournies ; comparatif : École des Métiers Bigard. Rendu 3D : three.js (licence MIT).
+    Découpes reportées des planches de cours fournies ; comparatif : École des Métiers Bigard ; dénominations : classeur « Guide de découpe de la viande bovine ». Rendu 3D : three.js (licence MIT).
     Contenu pédagogique à valider avec ton formateur.
-    <span id="version">Version du 5 octobre 2026 : squelette du bœuf, style dessin animé.</span>
+    <span id="version">Version du 6 octobre 2026 : os et muscles du bœuf en 3D, classeur de découpe.</span>
   </footer>
 
   <script src="vendor/three.min.js"></script>
@@ -63,6 +65,7 @@
   <script src="data/recettes.js"></script>
   <script src="data/pieces.js"></script>
   <script src="data/os.js"></script>
+  <script src="data/classeur.js"></script>
   <script src="vue3d.js"></script>
   <script src="app.js"></script>
 </body>

@@ -214,3 +214,63 @@ details.recette summary small { color: var(--doux); font-weight: 400; white-spac
   .tableau thead { display: none; }
   .tableau td::before { content: attr(data-animal); display: block; font-size: 12px; font-weight: 700; color: var(--doux); text-transform: uppercase; }
 }
+
+/* ---------- Classeur de découpe (dénominations ★, fiches magasin) ---------- */
+.note-etoiles { font-size: 13px; color: var(--doux); }
+.etoiles { color: #c98a00; letter-spacing: 1px; font-size: 14px; white-space: nowrap; }
+.etoiles i { font-style: normal; color: #e3d8c8; }
+.classeur { list-style: none; margin: 0; padding: 0; }
+.classeur li { padding: 8px 0; border-bottom: 1px dashed var(--trait); }
+.classeur li:last-child { border-bottom: 0; }
+.classeur .denom b { font-size: 15px; }
+.classeur .mention { font-size: 12px; font-weight: 600; color: #2d6a3a; background: #e8f3ea; border-radius: 6px; padding: 1px 7px; margin-left: 4px; }
+.classeur .morceau { font-weight: 600; font-size: 14px; }
+.classeur .morceau small { font-weight: 400; color: var(--doux); }
+.classeur span:not(.etoiles):not(.mention) { color: var(--doux); font-size: 14px; }
+.petits-noms { font-size: 14px; }
+details.fiche-magasin { border: 1px solid var(--trait); border-radius: 10px; margin: 8px 0; background: #fffdfa; }
+details.fiche-magasin summary { cursor: pointer; padding: 8px 12px; font-weight: 600; font-size: 14px; list-style: none; }
+details.fiche-magasin summary::-webkit-details-marker { display: none; }
+details.fiche-magasin summary::before { content: "▸ "; color: var(--accent); }
+details.fiche-magasin[open] summary::before { content: "▾ "; }
+details.fiche-magasin dl { margin: 0; padding: 0 14px 10px; display: grid; grid-template-columns: 92px 1fr; gap: 4px 10px; font-size: 14px; }
+details.fiche-magasin dt { font-weight: 700; color: var(--accent); }
+details.fiche-magasin dd { margin: 0; }
+.classeur-os { margin: 12px 0 0; padding: 10px 12px; border-left: 4px solid #c98a00; background: #fff6df; border-radius: 0 10px 10px 0; font-size: 14px; }
+.classeur-os strong { color: #8a5d00; }
+
+/* ---------- Plongée sur un os : carte dans la vue 3D, noms des muscles ---------- */
+.carte3d {
+  position: absolute; z-index: 3; left: 10px; bottom: 10px; max-width: min(440px, calc(100% - 20px));
+  background: rgba(255, 252, 247, .93); border-radius: 12px; box-shadow: var(--ombre); padding: 8px 10px; font-size: 13px;
+}
+.carte3d .titre b { font-size: 15px; }
+.carte3d .titre small { color: var(--doux); }
+.carte3d .muscles-lies { margin: 3px 0 6px; }
+.carte3d .muscles-lies a { color: var(--accent); font-weight: 600; }
+.carte3d .actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.carte3d button {
+  border: 1px solid var(--trait); background: var(--carte); color: var(--texte);
+  padding: 3px 9px; border-radius: 7px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.carte3d button[aria-pressed="true"] { background: #2b2320; border-color: #2b2320; color: #fff; }
+.carte3d .info { margin: 0; font-weight: 600; }
+.etiquettes3d.muscles span { color: #fff; background: rgba(90, 22, 26, .78); border-radius: 4px; text-shadow: none; }
+.etiquettes3d.muscles span.actif { background: #ffd25e; color: #2b2320; }
+@media (max-width: 900px) {
+  .carte3d { left: 6px; right: 6px; bottom: 6px; max-width: none; padding: 6px 8px; }
+}
+
+/* ---------- Plein écran 3D : se plonger dans le squelette ---------- */
+body.plein-ecran-3d { overflow: hidden; }
+body.plein-ecran-3d .entete, body.plein-ecran-3d .panneau, body.plein-ecran-3d .pied,
+body.plein-ecran-3d .liste-pieces, body.plein-ecran-3d .legende, body.plein-ecran-3d .couleurs3d { display: none !important; }
+body.plein-ecran-3d .page { display: block; padding: 0; max-width: none; }
+body.plein-ecran-3d .colonne-planche { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; background: #efe6da; }
+body.plein-ecran-3d .planche { flex: 1; aspect-ratio: auto; min-height: 0; border-radius: 0; box-shadow: none; }
+body.plein-ecran-3d .outils3d { margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: #2b2320; }
+body.plein-ecran-3d .outils3d button { background: #3d322e; border-color: #5a4b45; color: #f1e9e2; }
+body.plein-ecran-3d .outils3d button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+@media (max-width: 900px) {
+  .aide3d { left: 8px; right: auto; max-width: calc(100% - 16px); }
+}

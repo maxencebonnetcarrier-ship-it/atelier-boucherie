@@ -293,6 +293,8 @@
   };
   const VUE_DEPART = { az: -0.42, el: 0.22 };
   const ZOOM = { pieces: [0.8, 3.2], squelette: [0.6, 14] };
+  const PROCHE_OS = 1.15;     // plongée : distance minimale caméra -> centre de l'os, en rayons de l'os
+  const DECAL_PLONGEE = 0.1;  // plongée : l'os est remonté de 10 % de la hauteur de la vue (au-dessus de la carte)
 
   // ---------- la vue ----------
   window.Vue3D = function (conteneur, rappels) {
@@ -400,6 +402,12 @@
     }
     function coteDe(id) { return Math.cos((VUES_OS[id] || VUES.profil).az) >= 0 ? "g" : "d"; }
 
+    // Maillage de l'os choisi, du côté sur lequel on plonge.
+    function maillageOsChoisi() {
+      if (!anat || !etatOs.selection) return null;
+      const ms = anat.os.filter((x) => x.userData.id === etatOs.selection);
+      return ms.find((x) => x.userData.cote === etatOs.cote) || ms.find((x) => x.userData.cote === "") || ms[0] || null;
+    }
     // Os pair : celui du côté de la caméra.
     function osVisible(ms) {
       const cote = camera.position.z >= 0 ? "g" : "d";
@@ -502,7 +510,10 @@
 
     let maillage = null, modele = null, dernierEtat = null, yeux = null;
     const noirOeil = new T.MeshBasicMaterial({ color: 0x17110f });
-    const cam = { az: VUE_DEPART.az, el: VUE_DEPART.el, zoom: 1, centre: new T.Vector3(), base: 5 };
+    // decal : l'image est remontée de cette fraction de la hauteur de la vue (plongée : l'os choisi reste
+    // au-dessus de la carte du bas) ; c'est un décalage d'ÉCRAN, donc la vue tourne et zoome toujours
+    // autour du centre (l'os), et l'os ne file pas vers le bord quand on zoome.
+    const cam = { az: VUE_DEPART.az, el: VUE_DEPART.el, zoom: 1, centre: new T.Vector3(), base: 5, decal: 0 };
     const centreCorps = new T.Vector3();   // centre de l'animal entier (la caméra y revient hors plongée)
     let anim = null, prevu = false;
 
@@ -516,10 +527,13 @@
       if (anim) {
         const k = Math.min(1, (t - (anim.debut ??= t)) / anim.duree);
         const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-        cam.az = anim.de.az + (anim.vers.az - anim.de.az) * e;
-        cam.el = anim.de.el + (anim.vers.el - anim.de.el) * e;
-        cam.zoom = anim.de.zoom * Math.pow(anim.vers.zoom / anim.de.zoom, e);
+        if (!anim.libre) {
+          cam.az = anim.de.az + (anim.vers.az - anim.de.az) * e;
+          cam.el = anim.de.el + (anim.vers.el - anim.de.el) * e;
+          cam.zoom = anim.de.zoom * Math.pow(anim.vers.zoom / anim.de.zoom, e);
+        }
         if (anim.vers.centre) cam.centre.lerpVectors(anim.de.centre, anim.vers.centre, e);
+        cam.decal = anim.de.decal + (anim.vers.decal - anim.de.decal) * e;
         if (k >= 1) anim = null; else demanderRendu();
       }
       if (animEclat) {
@@ -543,7 +557,9 @@
         cam.centre.y + d * Math.sin(cam.el),
         cam.centre.z + d * Math.cos(cam.el) * Math.cos(cam.az));
       camera.near = Math.max(0.01, d * 0.02);
-      camera.updateProjectionMatrix();
+      const W = conteneur.clientWidth, H = conteneur.clientHeight;
+      if (cam.decal && W && H) camera.setViewOffset(W, H, 0, cam.decal * H, W, H);
+      else camera.clearViewOffset();
       camera.lookAt(cam.centre);
     }
     // Un point d'ancrage par pièce et par côté de l'animal : la surface au centre de la pièce.
@@ -651,21 +667,31 @@
     }
     new ResizeObserver(redimensionner).observe(conteneur);
 
-    function bornesZoom() { return mode.squelette ? ZOOM.squelette : ZOOM.pieces; }
+    function plongee() { return mode.squelette && !!etatOs.selection && !mode.eclate; }
+    // En plongée, on peut s'approcher de l'os choisi jusqu'à 1,15 fois son rayon (presque contre sa surface),
+    // quelle que soit sa taille : la rotule se zoome autant que le bassin.
+    function bornesZoom() {
+      if (!mode.squelette) return ZOOM.pieces;
+      const m = plongee() ? maillageOsChoisi() : null;
+      return m ? [ZOOM.squelette[0], Math.max(ZOOM.squelette[1], cam.base / (PROCHE_OS * m.userData.rayon))] : ZOOM.squelette;
+    }
     function bornerEl(el) { return mode.squelette ? Math.max(-1.45, Math.min(1.45, el)) : Math.max(-0.15, Math.min(1.35, el)); }
 
     function aller(vers, duree = 450) {
       const [zmin, zmax] = bornesZoom();
-      const cible = { az: vers.az ?? cam.az, el: vers.el ?? cam.el, zoom: Math.max(zmin, Math.min(zmax, vers.zoom ?? cam.zoom)) };
+      const vise = anim && !anim.libre ? anim.vers : cam;
+      const cible = { az: vers.az ?? vise.az, el: vers.el ?? vise.el, zoom: Math.max(zmin, Math.min(zmax, vers.zoom ?? vise.zoom)) };
       // tourner par le chemin le plus court
       while (cible.az - cam.az > Math.PI) cible.az -= 2 * Math.PI;
       while (cible.az - cam.az < -Math.PI) cible.az += 2 * Math.PI;
-      if (vers.centre) cible.centre = vers.centre.clone();
+      const centre = vers.centre || (anim && anim.vers.centre);
+      if (centre) cible.centre = centre.clone();
+      cible.decal = vers.decal ?? (vers.centre === centreCorps ? 0 : anim ? anim.vers.decal : cam.decal);
       if (!duree) {
-        cam.az = cible.az; cam.el = cible.el; cam.zoom = cible.zoom;
+        cam.az = cible.az; cam.el = cible.el; cam.zoom = cible.zoom; cam.decal = cible.decal;
         if (cible.centre) cam.centre.copy(cible.centre);
         anim = null;
-      } else anim = { de: { az: cam.az, el: cam.el, zoom: cam.zoom, centre: cam.centre.clone() }, vers: cible, duree };
+      } else anim = { de: { az: cam.az, el: cam.el, zoom: cam.zoom, centre: cam.centre.clone(), decal: cam.decal }, vers: cible, duree };
       demanderRendu();
     }
 
@@ -730,7 +756,7 @@
     toile.addEventListener("pointerdown", (e) => {
       pointeurs.set(e.pointerId, { x: e.clientX, y: e.clientY });
       toile.setPointerCapture(e.pointerId);
-      anim = null;
+      if (anim) anim.libre = true;   // l'angle et le zoom sont au doigt ; le centrage sur l'os se termine
       if (pointeurs.size === 1) {
         appui = { x: e.clientX, y: e.clientY, t: performance.now(), az: cam.az, el: cam.el, glisse: false, type: e.pointerType,
           deplacer: e.button === 2 || e.button === 1 || e.shiftKey, dernier: { x: e.clientX, y: e.clientY } };
@@ -748,7 +774,8 @@
         const [zmin, zmax] = bornesZoom();
         cam.zoom = Math.max(zmin, Math.min(zmax, geste.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / geste.dist)));
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        panner(mx - geste.mx, my - geste.my);
+        // en plongée, pincer ne déplace pas la vue : on reste centré sur l'os pour en faire le tour
+        if (!plongee()) panner(mx - geste.mx, my - geste.my);
         geste.mx = mx; geste.my = my;
         demanderRendu();
         return;
@@ -795,6 +822,7 @@
     toile.addEventListener("pointerleave", () => { if (!appui) survoler(null); });
     toile.addEventListener("wheel", (e) => {
       e.preventDefault();
+      if (anim) anim.libre = true;
       const [zmin, zmax] = bornesZoom();
       cam.zoom = Math.max(zmin, Math.min(zmax, cam.zoom * Math.exp(-e.deltaY * 0.0012)));
       demanderRendu();
@@ -931,14 +959,25 @@
         const c = m.userData.centre.clone().add(m.position);
         const demi = Math.tan(T.MathUtils.degToRad(camera.fov) / 2);
         const d = (m.userData.rayon * 1.55) / demi;
-        // décale le centre vers le bas de l'écran : l'os apparaît plus haut, au-dessus de la carte
-        const haut = new T.Vector3(-Math.sin(vue.el) * Math.sin(vue.az), Math.cos(vue.el), -Math.sin(vue.el) * Math.cos(vue.az));
-        c.addScaledVector(haut, -0.2 * d * demi);
-        aller({ ...vue, zoom: cam.base / Math.max(d, 0.05), centre: c }, duree);
+        // le centre de rotation est l'os lui-même ; l'image est remontée (décalage d'écran) pour que l'os
+        // apparaisse au-dessus de la carte du bas, à la même place quel que soit le zoom ou l'angle
+        aller({ ...vue, zoom: cam.base / Math.max(d, 0.05), centre: c, decal: DECAL_PLONGEE }, duree);
       },
       // Revenir à l'animal entier (hors plongée).
       recadrer(duree = 450) { aller({ ...VUE_DEPART, zoom: 1, centre: centreCorps }, duree); },
       osEn(x, y) { const a = toucherAnatomie(x, y); return a && a.type === "os" ? a.id : null; },
+      // Pour les tests : où se trouve à l'écran le centre de l'os choisi (pixels de la page), et à quelle distance.
+      ecranOsChoisi() {
+        const m = maillageOsChoisi();
+        if (!m) return null;
+        placerCamera();
+        camera.updateMatrixWorld();
+        const c = m.userData.centre.clone().add(m.position);
+        const p = c.clone().project(camera);
+        const r = rendu.domElement.getBoundingClientRect();
+        return { x: r.left + ((p.x + 1) / 2) * r.width, y: r.top + ((1 - p.y) / 2) * r.height, devant: p.z < 1,
+          vue: [r.left, r.top, r.width, r.height], distance: camera.position.distanceTo(c), rayon: m.userData.rayon, zoom: cam.zoom };
+      },
       // Pour les tests : un point de l'écran où l'os est visible et touché en premier.
       pointEcranOs(id) {
         if (!anat) return null;
@@ -989,10 +1028,16 @@
       voisins() { return modele.voisins.map((s) => [...s].map((i) => modele.pieces[i])); },
       // vues : autour de l'os choisi pendant la plongée, sinon autour de l'animal
       vue(nom) {
-        const plonge = mode.squelette && etatOs.selection && !mode.eclate;
-        aller({ ...(VUES[nom] || VUE_DEPART), zoom: plonge ? cam.zoom : Math.min(cam.zoom, 1.2), centre: plonge ? cam.centre : centreCorps });
+        const m = plongee() ? maillageOsChoisi() : null;
+        const z = anim && !anim.libre ? anim.vers.zoom : cam.zoom;
+        aller({ ...(VUES[nom] || VUE_DEPART), zoom: m ? z : Math.min(z, 1.2),
+          centre: m ? m.userData.centre.clone().add(m.position) : centreCorps, decal: m ? DECAL_PLONGEE : 0 });
       },
-      zoomer(f) { const [zmin, zmax] = bornesZoom(); aller({ zoom: Math.max(zmin, Math.min(zmax, cam.zoom * f)) }, 250); },
+      zoomer(f) {
+        const [zmin, zmax] = bornesZoom();
+        const z = anim && !anim.libre ? anim.vers.zoom : cam.zoom;
+        aller({ zoom: Math.max(zmin, Math.min(zmax, z * f)) }, 250);
+      },
       deplacer(dx, dy) { panner(dx, dy); },
       focaliser(piece, duree = 550) {
         const i = modele.pieces.indexOf(piece);

@@ -9,3 +9,6 @@ sources/squelette*
 
 # Fichiers intermédiaires de la fabrication des modèles 3D (régénérés par zones.py)
 outils/cache/
+
+# Photos de la base « Boeuf » (Google Drive de l'utilisateur, ~390 Mo) : gardées hors du dépôt public
+sources/photos-boeuf/

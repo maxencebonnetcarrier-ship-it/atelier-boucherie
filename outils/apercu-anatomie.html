@@ -1,0 +1,103 @@
+<!doctype html>
+<!-- Planche de contrôle des os et muscles 3D (outil de fabrication, pas une page de l'appli).
+     Paramètres : ?os=palette,femur  (ou « tout »)  &vues=lat,cra,dor,med  &muscles=1  &corps=1 -->
+<html lang="fr">
+<head><meta charset="utf-8"><title>Aperçu anatomie</title>
+<style>
+  body { margin: 0; background: #1d1a19; color: #ddd; font: 12px system-ui; }
+  #grille { display: grid; gap: 4px; padding: 4px; }
+  .case { position: relative; background: radial-gradient(#f7f1e8, #d9cbb8); height: 300px; }
+  .case span { position: absolute; left: 6px; top: 4px; color: #2b2320; font-weight: 700; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style></head>
+<body>
+<div id="grille"></div>
+<script src="../app/vendor/three.min.js"></script>
+<script src="../app/data/anatomie.js"></script>
+<script src="../app/data/modeles3d.js"></script>
+<script>
+  const T = THREE;
+  const q = new URLSearchParams(location.search);
+  const A = window.ANATOMIE.boeuf;
+  const ids = (q.get("os") || "tout") === "tout" ? A.os.map((o) => o.id) : q.get("os").split(",");
+  const vues = (q.get("vues") || "lat,cra,dor").split(",");
+  const avecMuscles = q.get("muscles") === "1";
+  const debug = q.get("debug") === "1";
+  const octets = (b) => Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
+  function geo(e, miroir) {
+    const qv = new Uint16Array(octets(e.sommets).buffer), [lo, hi] = e.boite;
+    const pos = new Float32Array(qv.length);
+    for (let i = 0; i < qv.length; i++) { const a = i % 3; pos[i] = lo[a] + (qv[i] / 65535) * (hi[a] - lo[a]); if (miroir && a === 2) pos[i] = -pos[i]; }
+    const g = new T.BufferGeometry();
+    g.setAttribute("position", new T.BufferAttribute(pos, 3));
+    let idx = new Uint16Array(octets(e.triangles).buffer);
+    if (miroir) { idx = idx.slice(); for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; } }
+    g.setIndex(new T.BufferAttribute(idx, 1));
+    g.setAttribute("ombre", new T.BufferAttribute(Float32Array.from(octets(e.ombre), (v) => v / 255), 1));
+    g.setAttribute("partie", new T.BufferAttribute(Float32Array.from(octets(e.parties)), 1));
+    g.computeVertexNormals(); g.computeBoundingSphere(); g.computeBoundingBox();
+    return g;
+  }
+  const mat = (base) => new T.ShaderMaterial({
+    uniforms: { base: { value: new T.Color(base) } },
+    vertexShader: `attribute float ombre; attribute float partie; varying vec3 vN; varying vec3 vV; varying float vO; varying float vP;
+      void main(){ vec4 mv = modelViewMatrix*vec4(position,1.); vN = normalize(normalMatrix*normal); vV=-mv.xyz; vO=ombre; vP=partie; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader: `uniform vec3 base; varying vec3 vN; varying vec3 vV; varying float vO; varying float vP;
+      void main(){ vec3 N=normalize(vN); vec3 V=normalize(vV); if(!gl_FrontFacing) N=-N;
+        vec3 c = base; if (vP>1.5) c = vec3(0.97,0.95,0.9); else if (vP>0.5) c = vec3(0.72,0.82,0.86);
+        vec3 L=normalize(vec3(-0.4,0.75,0.55)); float d=max(dot(N,L),0.); float hemi=0.5+0.5*N.y;
+        float ao = mix(0.45,1.0,vO);
+        vec3 col = c*(0.32*hemi*ao + 0.75*d*mix(0.7,1.0,vO)) + vec3(1.)*pow(max(dot(N,normalize(L+V)),0.),40.)*0.12;
+        gl_FragColor=vec4(col,1.); ${debug ? 'gl_FragColor=vec4(N*0.5+0.5,1.); if(!gl_FrontFacing) gl_FragColor=vec4(1.,0.,1.,1.);' : ''} }`,
+  });
+  const DIRS = { lat: [0, 0, 1], med: [0, 0, -1], cra: [-1, 0, 0.0001], cau: [1, 0, 0.0001], dor: [0.0001, 1, 0], ven: [0.0001, -1, 0], tq: [-0.6, 0.35, 0.72] };
+  const grille = document.getElementById("grille");
+  grille.style.gridTemplateColumns = `repeat(${vues.length}, 1fr)`;
+  if (q.get("scene") === "1") {
+    // tout le squelette (+ côté droit par symétrie) et les muscles du côté gauche, vues larges
+    grille.style.gridTemplateColumns = "1fr";
+    const objets = [];
+    for (const e of A.os) { objets.push(new T.Mesh(geo(e, false), mat("#efe4cc"))); if (e.pair) objets.push(new T.Mesh(geo(e, true), mat("#efe4cc"))); }
+    const coul = ["#a8352f", "#c0503a", "#8e2a2e", "#b8443c", "#9b3a33", "#d0614a"];
+    if (q.get("muscles") !== "0") (A.muscles || []).forEach((m, i) => objets.push(new T.Mesh(geo(m, false), mat(coul[i % coul.length]))));
+    for (const v of vues) {
+      const d = document.createElement("div"); d.className = "case"; d.style.height = "560px";
+      d.innerHTML = `<span>scène · ${v}</span>`; grille.appendChild(d);
+      const r = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); r.setClearColor(0xe9dfd2, 1);
+      d.appendChild(r.domElement); r.setSize(d.clientWidth, d.clientHeight);
+      const sc = new T.Scene(); objets.forEach((o) => sc.add(o));
+      const cam = new T.PerspectiveCamera(28, d.clientWidth / d.clientHeight, 0.05, 30);
+      const c = new T.Vector3(-0.2, 0.8, 0); const dir = new T.Vector3(...DIRS[v]).normalize();
+      cam.position.copy(c).addScaledVector(dir, 4.4); cam.up.set(v === "dor" ? -1 : 0, v === "dor" ? 0 : 1, 0); cam.lookAt(c);
+      r.render(sc, cam);
+    }
+  }
+  for (const id of (q.get("scene") === "1" ? [] : ids)) {
+    const e = A.os.find((o) => o.id === id) || (A.muscles || []).find((m) => m.id === id);
+    if (!e) continue;
+    const g = geo(e, false);
+    const objets = [new T.Mesh(g, mat(A.os.includes(e) ? "#efe4cc" : "#a8352f"))];
+    if (avecMuscles && A.muscles) for (const m of A.muscles.filter((m) => m.os && m.os.includes(id))) objets.push(new T.Mesh(geo(m, false), mat("#a8352f")));
+    for (const v of vues) {
+      const d = document.createElement("div"); d.className = "case";
+      d.innerHTML = `<span>${id} · ${v}</span>`;
+      grille.appendChild(d);
+      const r = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); r.setClearColor(0xe9dfd2, 1);
+      r.setPixelRatio(1);
+      d.appendChild(r.domElement);
+      r.setSize(d.clientWidth, d.clientHeight);
+      const sc = new T.Scene();
+      objets.forEach((o) => sc.add(o.clone()));
+      const s = g.boundingSphere;
+      const cam = new T.PerspectiveCamera(30, d.clientWidth / d.clientHeight, 0.01, 20);
+      const dir = new T.Vector3(...DIRS[v]).normalize();
+      cam.position.copy(s.center).addScaledVector(dir, s.radius / Math.tan(T.MathUtils.degToRad(15)) * 1.05);
+      cam.up.set(v === "dor" || v === "ven" ? -1 : 0, v === "dor" || v === "ven" ? 0 : 1, 0);
+      cam.lookAt(s.center);
+      r.render(sc, cam);
+    }
+  }
+  document.title = "pret";
+</script>
+</body>
+</html>

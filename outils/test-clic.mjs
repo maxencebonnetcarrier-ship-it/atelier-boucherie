@@ -17,8 +17,10 @@ const URL_APP = process.argv[2] || pathToFileURL(join(APP, "index.html")).href;
 // Données de référence (lues comme le fait la page).
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/recettes.js", "data/pieces.js", "data/os.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
-const { ANIMAUX, PIECES, OS } = ctx.window;
+for (const f of ["data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
+const { ANIMAUX, PIECES, OS, CLASSEUR, ANATOMIE } = ctx.window;
+// muscles (en volume) de chaque pièce du bœuf
+const musclesDe = (pieces) => ANATOMIE.boeuf.muscles.filter((m) => m.pieces.some((p) => pieces.includes(p))).map((m) => m.id).sort();
 
 const erreurs = [];
 let clics = 0;
@@ -93,6 +95,14 @@ try {
   const nomSel = await lire(`(() => { const s = document.querySelector('.etiquettes3d span.actif'); return s && s.style.visibility === 'visible' ? s.dataset.piece : null; })()`);
   if (nomSel !== "paleron") erreurs.push(`le nom de la pièce choisie n'est pas affiché (${nomSel})`);
   const pal = PIECES.boeuf.find((p) => p.id === "paleron");
+  // classeur de découpe : les dénominations du guide (étoiles) et les fiches magasin du paleron
+  const classeur = await lire(`({ denoms: document.querySelectorAll('#panneau .classeur li').length,
+    etoiles: document.querySelectorAll('#panneau .classeur .etoiles').length,
+    fiches: document.querySelectorAll('#panneau details.fiche-magasin:not(.lexique)').length })`);
+  const cPal = CLASSEUR.boeuf.paleron;
+  if (classeur.denoms !== cPal.guide.length || classeur.etoiles !== cPal.guide.length || classeur.fiches !== cPal.magasin.length) {
+    erreurs.push(`fiche paleron : classeur affiché ${JSON.stringify(classeur)} au lieu de ${cPal.guide.length} dénominations et ${cPal.magasin.length} fiches magasin`);
+  }
   if (contenu.cuissons !== pal.cuissons.length || contenu.transfo !== pal.transformations.length
     || contenu.recettes !== pal.recettes.length || !contenu.ouverte || contenu.equiv < 3 || contenu.selection !== "paleron") {
     erreurs.push("fiche paleron incomplète : " + JSON.stringify(contenu));
@@ -140,25 +150,95 @@ try {
   await lire("window.scrollTo(0,0)");
   await nav.capture(join(CAPTURES, "5-veau-region-epaule.png"));
 
-  // 7 bis. Squelette du bœuf : chaque os est visible, se clique et ouvre sa fiche ; vue éclatée.
+  // 7 bis. Squelette du bœuf : chargé à la demande ; chaque os est visible, se clique, ouvre sa fiche
+  // et « plonge » dessus (caméra centrée sur l'os, ses muscles affichés) ; vue éclatée.
   let clicsOs = 0;
+  const attendreSquelette = async () => {
+    for (let i = 0; i < 80; i++) { if (await lire("window.ATELIER3D.modeCourant().squelette")) return true; await attendre(100); }
+    return false;
+  };
   await aller("#boeuf/squelette");
+  if (!(await attendreSquelette())) erreurs.push("squelette du bœuf : data/anatomie.js ne se charge pas");
   await attendre(400);
-  const m0 = await lire("[window.ATELIER3D.modeCourant().squelette, window.ATELIER3D.osAffiches().length]");
+  const m0 = await lire("[window.ATELIER3D.modeCourant().squelette, window.ATELIER3D.osAffiches().length, window.ATELIER3D.modeCourant().muscles.length]");
   if (!m0[0] || m0[1] < 8) erreurs.push(`squelette du bœuf : mode ${m0[0]}, ${m0[1]} noms d'os affichés`);
+  if (m0[2] !== 0) erreurs.push(`squelette sans os choisi : ${m0[2]} muscles affichés au lieu de 0`);
   // ce qui est réellement AFFICHÉ (pas seulement l'attribut hidden) : pas de filtres de cuisson en mode squelette
   const legendeVue = await lire("getComputedStyle(document.getElementById('legende')).display");
   if (legendeVue !== "none") erreurs.push(`mode squelette : la ligne des filtres de cuisson reste affichée (display ${legendeVue})`);
   for (const o of OS.boeuf) {
+    await lire("location.hash = '#boeuf/squelette'");
+    await attendre(120);
     const pt = await lire(`window.ATELIER3D.pointEcranOs(${JSON.stringify(o.id)})`);
     if (!pt) { erreurs.push(`os ${o.id} : aucun point visible`); continue; }
     await nav.cliquer(pt[0], pt[1]);
     clicsOs++;
-    const [h, titre, forts, choisi] = await lire("[location.hash, (document.querySelector('#panneau h2')||{}).textContent, window.ATELIER3D.etatCourant().forts, window.ATELIER3D.modeCourant().os]");
-    if (h !== `#boeuf/squelette/${o.id}` || titre !== o.nom || choisi !== o.id) erreurs.push(`os ${o.id} : clic → ${h} « ${titre} » (choisi : ${choisi})`);
+    await attendre(750);
+    const [h, titre, forts, mode, ori] = await lire(`[location.hash, (document.querySelector('#panneau h2')||{}).textContent,
+      window.ATELIER3D.etatCourant().forts, window.ATELIER3D.modeCourant(), window.ATELIER3D.orientation()]`);
+    if (h !== `#boeuf/squelette/${o.id}` || titre !== o.nom || mode.os !== o.id) erreurs.push(`os ${o.id} : clic → ${h} « ${titre} » (choisi : ${mode.os})`);
     if ([...forts].sort().join() !== [...o.pieces].sort().join()) erreurs.push(`os ${o.id} : pièces surlignées ${forts} au lieu de ${o.pieces}`);
+    // plongée : les muscles de ses pièces sont affichés, les autres os estompés, la caméra s'est approchée
+    if ([...mode.muscles].sort().join() !== musclesDe(o.pieces).join()) erreurs.push(`os ${o.id} : muscles affichés ${mode.muscles} au lieu de ${musclesDe(o.pieces)}`);
+    if (mode.autresOsNets) erreurs.push(`os ${o.id} : les autres os restent nets pendant la plongée`);
+    if (mode.osChoisisNets !== 1) erreurs.push(`os ${o.id} : ${mode.osChoisisNets} os allumés pendant la plongée au lieu d'un seul (côté gauche et droit allumés ensemble ?)`);
+    if (!(ori.zoom > 1.2)) erreurs.push(`os ${o.id} : la vue ne plonge pas sur l'os (zoom ${ori.zoom.toFixed(2)})`);
+    const carte = await lire("(() => { const c = document.getElementById('carte3d'); return c && !c.hidden ? (c.querySelector('b')||{}).textContent : null; })()");
+    if (carte !== o.nom) erreurs.push(`os ${o.id} : carte de la plongée « ${carte} »`);
   }
   await allerOsCapture("#boeuf/squelette/palette", "9-boeuf-squelette-palette.png");
+  // un muscle touché pendant la plongée ouvre la fiche de sa pièce
+  const ptMuscle = await lire(`window.ATELIER3D.pointEcranMuscle("paleron")`);
+  if (!ptMuscle) erreurs.push("plongée sur la palette : le muscle du paleron n'est pas touchable");
+  else {
+    await nav.cliquer(ptMuscle[0], ptMuscle[1]);
+    await attendre(300);
+    const hm = await lire("location.hash");
+    if (hm !== "#boeuf/paleron") erreurs.push(`clic sur le muscle du paleron → ${hm}`);
+  }
+  // navigation libre : zoom bien plus fort qu'avant, déplacement (clic droit), vue par-dessous
+  await aller("#boeuf/squelette/femur");
+  await attendre(900);
+  const avantNav = await lire("window.ATELIER3D.orientation()");
+  const r3 = await lire("(() => { const r = document.querySelector('#planche canvas').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()");
+  for (let i = 0; i < 12; i++) await nav.cdp("Input.dispatchMouseEvent", { type: "mouseWheel", x: r3[0], y: r3[1], deltaX: 0, deltaY: -240 });
+  await attendre(200);
+  const zoomMax = await lire("window.ATELIER3D.orientation().zoom");
+  if (!(zoomMax > 3.3 && zoomMax > avantNav.zoom)) erreurs.push(`squelette : la molette ne zoome pas au-delà de l'ancien maximum (${avantNav.zoom.toFixed(2)} → ${zoomMax.toFixed(2)})`);
+  await nav.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: r3[0], y: r3[1] });
+  await nav.cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: r3[0], y: r3[1], button: "right", buttons: 2, clickCount: 1 });
+  for (let i = 1; i <= 8; i++) await nav.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: r3[0] + 15 * i, y: r3[1], button: "right", buttons: 2 });
+  await nav.cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: r3[0] + 120, y: r3[1], button: "right", clickCount: 1 });
+  await attendre(150);
+  const apresPan = await lire("[window.ATELIER3D.orientation(), location.hash]");
+  const bouge = Math.hypot(...apresPan[0].centre.map((v, i) => v - avantNav.centre[i]));
+  if (!(bouge > 0.005)) erreurs.push(`clic droit glissé : la vue ne se déplace pas (${bouge.toFixed(4)})`);
+  if (apresPan[1] !== "#boeuf/squelette/femur") erreurs.push(`clic droit glissé : a changé la sélection (${apresPan[1]})`);
+  // glisser vers le haut (à droite de la carte de la plongée) : la caméra passe dessous
+  await nav.glisser(r3[0] + 260, r3[1] + 150, r3[0] + 260, r3[1] - 170);
+  const elDessous = await lire("window.ATELIER3D.orientation().el");
+  if (!(elDessous < -0.3)) erreurs.push(`squelette : on ne peut pas regarder par-dessous (élévation ${elDessous.toFixed(2)})`);
+  // « Muscles » : toute la viande sur le squelette
+  await aller("#boeuf/squelette");
+  await attendre(300);
+  await lire(`document.querySelector('#outils3d [data-muscles]').click()`);
+  await attendre(400);
+  const viande = await lire("[window.ATELIER3D.modeCourant().muscles.length, window.ATELIER3D.musclesAffiches().length]");
+  if (viande[0] !== ANATOMIE.boeuf.muscles.length || viande[1] < 8) erreurs.push(`bouton Muscles : ${viande[0]} muscles affichés (${viande[1]} noms) sur ${ANATOMIE.boeuf.muscles.length}`);
+  await lire("window.scrollTo(0,0)");
+  await nav.capture(join(CAPTURES, "11-boeuf-muscles.png"));
+  await lire(`document.querySelector('#outils3d [data-muscles]').click()`);
+  await attendre(200);
+  // plein écran : la 3D prend tout l'écran ; Échap pour sortir
+  await lire(`document.querySelector('#outils3d [data-plein]').click()`);
+  await attendre(300);
+  const plein = await lire("(() => { const r = document.getElementById('planche').getBoundingClientRect(); return [document.body.classList.contains('plein-ecran-3d'), Math.round(r.width), Math.round(r.height), innerWidth, innerHeight]; })()");
+  if (!plein[0] || plein[1] < plein[3] - 2 || plein[2] < plein[4] * 0.8) erreurs.push(`plein écran : ${JSON.stringify(plein)}`);
+  await nav.cdp("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await nav.cdp("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await attendre(200);
+  if (await lire("document.body.classList.contains('plein-ecran-3d')")) erreurs.push("plein écran : Échap ne le quitte pas");
+  // vue éclatée
   await lire(`document.querySelector('#outils3d [data-eclater]').click()`);
   await attendre(1300);
   const ecl = await lire("window.ATELIER3D.modeCourant()");
@@ -203,6 +283,25 @@ try {
   if (hashMobile !== "#porc/echine") erreurs.push(`toucher du doigt sur l'échine (téléphone) → ${hashMobile}`);
   await lire("document.querySelector('#panneau').scrollIntoView()");
   await nav.capture(join(CAPTURES, "8-mobile-porc-fiche.png"));
+  await aller("#boeuf/squelette");
+  await attendreSquelette();
+  await attendre(400);
+  await lire("window.scrollTo(0,0)");
+  const ptOsMobile = await lire(`window.ATELIER3D.pointEcranOs("femur")`);
+  if (!ptOsMobile) erreurs.push("téléphone : fémur introuvable à l'écran");
+  else {
+    await nav.cdp("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: ptOsMobile[0], y: ptOsMobile[1] }] });
+    await nav.cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await attendre(900);
+    const [hOs, defile] = await lire("[location.hash, Math.round(window.scrollY)]");
+    if (hOs !== "#boeuf/squelette/femur") erreurs.push(`téléphone : toucher le fémur → ${hOs}`);
+    if (defile > 40) erreurs.push(`téléphone : toucher un os fait descendre la page (${defile} px) au lieu de rester dans la 3D`);
+    await lire(`document.querySelector('#outils3d [data-plein]').click()`);
+    await attendre(500);
+    const nomsMuscles = await lire("window.ATELIER3D.musclesAffiches()");
+    if (nomsMuscles.length < 2) erreurs.push(`téléphone, plongée sur le fémur en plein écran : ${nomsMuscles.length} nom(s) de muscle visibles (${nomsMuscles})`);
+    await nav.capture(join(CAPTURES, "12-mobile-plongee-femur.png"));
+  }
 
   if (nav.journal.length) erreurs.push("erreurs JavaScript dans la page :\n   " + nav.journal.join("\n   "));
 } catch (e) {
@@ -222,5 +321,5 @@ if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) sur ${clics} clics :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${clics} pièces et ${OS.boeuf.length} os cliqués en 3D, chacun ouvre la bonne fiche ; survol, rotation, liste, filtre, comparatif, squelette, vue éclatée et téléphone vérifiés. Captures : outils/captures/`);
+console.log(`OK — ${clics} pièces et ${OS.boeuf.length} os cliqués en 3D, chacun ouvre la bonne fiche ; plongée sur chaque os avec ses muscles, clic sur un muscle, zoom, déplacement, vue par-dessous, toute la viande, plein écran, classeur, survol, rotation, liste, filtre, comparatif, vue éclatée et téléphone vérifiés. Captures : outils/captures/`);
 process.exit(0);

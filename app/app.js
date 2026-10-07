@@ -4,11 +4,13 @@
 
   const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES } = window;
   const OS = window.OS || {};
+  const CLASSEUR = window.CLASSEUR || null;
   const RAPIDES = ["griller", "poeler", "rotir", "sauter", "cru"];
   const LENTES = ["braiser", "bouillir"];
 
   const $ = (id) => document.getElementById(id);
-  const etat = { animal: ANIMAUX[0].id, piece: null, filtre: null, vue: "planche", montrer: true, squelette: false, os: null, eclate: false };
+  const etat = { animal: ANIMAUX[0].id, piece: null, filtre: null, vue: "planche", montrer: true, squelette: false, os: null, eclate: false,
+    muscles: true, viande: false, autresOs: false, chargement: false, erreurAnatomie: null, recadrer: false };
 
   // Couleur d'une pièce sur le modèle 3D = sa famille de cuisson (même code pour les 4 animaux).
   // Plusieurs nuances par famille, pour que deux pièces voisines ne se confondent pas.
@@ -50,9 +52,11 @@
     if (ANIMAUX.some((x) => x.id === a)) {
       if (a !== etat.animal) { etat.filtre = null; etat.eclate = false; }
       etat.animal = a;
+      const avant = etat.os;
       etat.squelette = p === "squelette" && !!OS[a];
       if (!etat.squelette) etat.eclate = false;
       etat.os = etat.squelette && q && osDe(a, q) ? q : null;
+      if (etat.squelette && avant && !etat.os) etat.recadrer = true;
       etat.piece = !etat.squelette && p && pieceDe(a, p) ? p : null;
     }
   }
@@ -137,39 +141,96 @@
       window.ATELIER3D = vue3d; // accès pour les tests automatiques
     }
     vue3d.afficher(etat.animal, Object.fromEntries(PIECES[etat.animal].map((p) => [p.id, nomCourt(p)])));
+    // Le squelette réaliste et les muscles (data/anatomie.js, ~2,5 Mo) ne sont chargés qu'à la première ouverture.
+    if (etat.squelette && OS[etat.animal] && !vue3d.anatomiePrete(etat.animal) && !etat.chargement && !etat.erreurAnatomie) {
+      etat.chargement = true;
+      vue3d.chargerAnatomie()
+        .then(() => { etat.chargement = false; rendre(); })
+        .catch((e) => { etat.chargement = false; etat.erreurAnatomie = e.message; rendre(); });
+    }
     const os = etat.os && osDe(etat.animal, etat.os);
-    vue3d.squelette(etat.squelette, Object.fromEntries((OS[etat.animal] || []).map((o) => [o.id, o.nom])));
+    vue3d.squelette(etat.squelette, Object.fromEntries((OS[etat.animal] || []).map((o) => [o.id, o.nom])),
+      Object.fromEntries(PIECES[etat.animal].map((p) => [p.id, nomCourt(p)])));
     vue3d.eclater(etat.squelette && etat.eclate);
+    vue3d.voir({ muscles: etat.muscles, tous: etat.viande, autres: etat.autresOs });
     vue3d.etat({
       couleurs: couleursPieces(), selection: etat.piece, forts: os ? os.pieces : [],
       etiquettes: etat.filtre ? PIECES[etat.animal].filter(correspond).map((p) => p.id) : null,
     });
-    vue3d.etatOs({ selection: etat.os, lies: etat.piece ? osDePiece(etat.animal, etat.piece).map((o) => o.id) : [] });
+    vue3d.etatOs({ selection: etat.os, lies: os ? os.pieces : [] });
     if (etat.piece && etat.montrer) vue3d.focaliser(etat.piece);
-    if (etat.os && etat.montrer) vue3d.focaliserOs(etat.os);
+    if (etat.os && etat.montrer && !etat.eclate) vue3d.focaliserOs(etat.os);
+    if (etat.squelette && !etat.os && etat.recadrer) vue3d.recadrer();
+    etat.recadrer = false;
     etat.montrer = true;
     rendreOutils();
+    rendreCarte3d(os);
     $("planche").setAttribute("aria-label", `${nomAnimal(etat.animal)} en 3D : glisse pour le faire tourner, clique sur une pièce`);
+  }
+
+  // Petite carte DANS la vue 3D quand on a plongé sur un os : on reste dans la 3D (sur téléphone,
+  // la page ne descend plus vers la fiche) ; la fiche complète reste à portée d'un bouton.
+  function rendreCarte3d(os) {
+    let carte = $("carte3d");
+    if (!carte) {
+      carte = document.createElement("div");
+      carte.id = "carte3d";
+      carte.className = "carte3d";
+      $("planche").appendChild(carte);
+    }
+    const msg = !etat.squelette ? null : etat.chargement ? "Chargement du squelette et des muscles…"
+      : etat.erreurAnatomie ? "Le squelette 3D n’a pas pu se charger : " + etat.erreurAnatomie : null;
+    if (msg) {
+      carte.hidden = false;
+      carte.innerHTML = `<p class="info">${esc(msg)}</p>`;
+      return;
+    }
+    if (!etat.squelette || !os || etat.eclate) { carte.hidden = true; carte.innerHTML = ""; return; }
+    const pieces = os.pieces.map((id) => pieceDe(etat.animal, id)).filter(Boolean);
+    carte.hidden = false;
+    carte.innerHTML = `
+      <div class="titre"><b>${esc(os.nom)}</b> <small>${esc(os.savant)}</small></div>
+      ${pieces.length ? `<div class="muscles-lies">Muscles posés dessus : ${pieces.map((p) => `<a href="#${etat.animal}/${p.id}">${esc(nomCourt(p))}</a>`).join(" · ")}</div>`
+        : `<div class="muscles-lies">Aucune pièce de la planche n’est posée sur cet os.</div>`}
+      <div class="actions">
+        <button type="button" data-voir="muscles" aria-pressed="${etat.muscles}">Muscles</button>
+        <button type="button" data-voir="autres" aria-pressed="${etat.autresOs}">Autres os</button>
+        <button type="button" data-fiche>Fiche ↓</button>
+        <button type="button" data-sortir aria-label="Revenir au squelette entier">✕</button>
+      </div>`;
   }
 
   // Boutons Squelette / Éclater : seulement pour un animal dont le squelette existe.
   function rendreOutils() {
     const bs = document.querySelector("#outils3d [data-squelette]");
     const be = document.querySelector("#outils3d [data-eclater]");
+    const bm = document.querySelector("#outils3d [data-muscles]");
     bs.hidden = !OS[etat.animal];
     bs.setAttribute("aria-pressed", String(etat.squelette));
     be.hidden = !etat.squelette;
     be.setAttribute("aria-pressed", String(etat.eclate));
     be.textContent = etat.eclate ? "Rassembler" : "Éclater";
-    document.querySelector(".aide3d").textContent = etat.squelette ? "Glisse pour tourner · touche un os" : "Glisse pour tourner · touche une pièce";
+    bm.hidden = !etat.squelette;
+    bm.setAttribute("aria-pressed", String(etat.viande));
+    const bp = document.querySelector("#outils3d [data-plein]");
+    const plein = document.body.classList.contains("plein-ecran-3d");
+    bp.setAttribute("aria-pressed", String(plein));
+    bp.textContent = plein ? "Quitter le plein écran" : "Plein écran";
+    const tactile = window.matchMedia("(pointer: coarse)").matches;
+    document.querySelector(".aide3d").textContent = !etat.squelette ? "Glisse pour tourner · touche une pièce"
+      : tactile ? "Glisse : tourner · pince : zoom · 2 doigts : déplacer"
+        : "Glisse pour tourner · molette pour zoomer · clic droit pour déplacer · clique un os";
   }
 
   function rendreCouleurs() {
     if (etat.squelette) {
       $("couleurs3d").innerHTML = `<span class="titre">Couleurs :</span>`
-        + `<span class="pastille" style="--c:#ebe0c9">os</span>`
-        + `<span class="pastille" style="--c:#f2b42e">os choisi</span>`
-        + `<span class="pastille" style="--c:rgba(217,56,60,.6)">pièces posées sur l’os choisi</span>`;
+        + `<span class="pastille" style="--c:#ecdfc4">os</span>`
+        + `<span class="pastille" style="--c:#bcd6dc">cartilage</span>`
+        + `<span class="pastille" style="--c:#f3c45a">os choisi</span>`
+        + `<span class="pastille" style="--c:${TEINTE_FAMILLE.rapide}">muscle à cuisson rapide</span>`
+        + `<span class="pastille" style="--c:${TEINTE_FAMILLE.lente}">muscle à cuisson lente</span>`
+        + `<span class="pastille" style="--c:${TEINTE_FAMILLE.mixte}">rapide ou lente</span>`;
       return;
     }
     const presentes = [...new Set(PIECES[etat.animal].map(famille))];
@@ -273,10 +334,12 @@
       <h2>Touche un os</h2>
       <p>Le corps devient transparent : les os apparaissent à leur place. Chaque pièce de viande repose sur un os ; désosser, c’est suivre l’os.</p>
       <div class="pas">
-        <div><b>1</b><span>Touche un os (ou choisis-le dans la liste) : son nom de boucher, son nom savant et les pièces posées dessus s’affichent.</span></div>
-        <div><b>2</b><span>Les pièces posées sur l’os restent colorées sur le corps transparent.</span></div>
-        <div><b>3</b><span>« Éclater » écarte les os les uns des autres, « Rassembler » remonte le squelette.</span></div>
+        <div><b>1</b><span>Touche un os : la vue plonge dessus. Tourne autour, zoome, déplace-toi pour voir sa forme sous tous les angles.</span></div>
+        <div><b>2</b><span>Les muscles posés sur l’os apparaissent autour de lui, avec leur nom ; touche un muscle pour ouvrir sa fiche.</span></div>
+        <div><b>3</b><span>« Muscles » montre toute la viande sur le squelette ; « Éclater » écarte les os les uns des autres.</span></div>
       </div>
+      ${window.COMPTE_OS ? `<div class="classeur-os"><strong>Au classeur :</strong> ${esc(window.COMPTE_OS)}</div>` : ""}
+      <p class="source">Os et muscles modélisés pour comprendre la structure : formes simplifiées, à valider avec ton formateur.</p>
     </div>`;
   }
 
@@ -288,11 +351,37 @@
       <p class="alias">${esc(o.savant)}</p>
       <p>${esc(o.savoir)}</p>
       <div class="conseil"><strong>Au désossage :</strong> ${esc(o.desossage)}</div>
+      ${o.classeur ? `<div class="classeur-os"><strong>Au classeur :</strong> ${esc(o.classeur)}</div>` : ""}
       ${o.mrs ? `<p class="note-mrs">⚠️ ${esc(window.REGLE_MRS)}</p>` : ""}
       <h3>Pièces posées sur cet os</h3>
       ${pieces.length ? `<ul class="transfo">${pieces.map((p) => `<li><a href="#${etat.animal}/${p.id}"><b>${esc(p.nom)}</b></a><span>${esc(typeCuisson(p).txt)}</span></li>`).join("")}</ul>`
         : `<p>Aucune pièce de ta planche ne repose sur cet os.</p>`}
-      <p class="source">Sources : fiche « Le squelette du bovin » (École des Métiers Bigard) ; tableau des pièces de bœuf (colonne OS) ; Wikipédia, « Désossage ». Conseils à faire valider par ton formateur.</p>`;
+      <p class="source">Sources : fiche « Le squelette du bovin » (École des Métiers Bigard) ; tableau des pièces de bœuf (colonne OS) ; Wikipédia, « Désossage » ; classeur de découpe (tableaux « Le bœuf » n° 1 à 3, guide de découpe). Conseils à faire valider par ton formateur.</p>`;
+  }
+
+  // Étoiles du guide de découpe : ★ pleines + ☆ restantes (sur 3).
+  const etoiles = (n) => `<span class="etoiles" aria-label="${n} étoile${n > 1 ? "s" : ""} sur 3">${"★".repeat(n)}<i>${"★".repeat(3 - n)}</i></span>`;
+
+  // Classeur de découpe : dénominations du guide (★), fiches magasin, petits noms des tableaux.
+  function rendreClasseur(piece) {
+    const c = CLASSEUR && CLASSEUR[etat.animal] && CLASSEUR[etat.animal][piece.id];
+    if (!c) return "";
+    const guide = [...(c.guide || [])].sort((a, b) => b.etoiles - a.etoiles);
+    const lignes = guide.map((g) => `<li>
+        <div class="denom"><b>${esc(g.nom)}</b> ${etoiles(g.etoiles)}${g.mention ? ` <span class="mention">${esc(g.mention)}</span>` : ""}</div>
+        <div class="morceau">${esc(g.morceau)}${g.p ? ` <small>· guide p. ${g.p}</small>` : ""}</div>
+        <span>${esc(g.preparation)}</span></li>`).join("");
+    const champ = (titre, v) => v ? `<dt>${titre}</dt><dd>${Array.isArray(v) ? v.map(esc).join(" · ") : esc(v)}</dd>` : "";
+    const fiches = (c.magasin || []).map((f) => `<details class="fiche-magasin"><summary>Fiche magasin : ${esc(f.titre)}</summary>
+        <dl>${champ("Contrôle", f.controle)}${champ("Parage", f.parage)}${champ("Découpe", f.decoupe)}${champ("Barquettes", f.barquettes)}${champ("Poids", f.poids)}</dl></details>`).join("");
+    return `<h3>Au rayon : le classeur de découpe</h3>
+      <p class="note-etoiles">${esc(CLASSEUR.etoiles)}</p>
+      ${lignes ? `<ul class="classeur">${lignes}</ul>` : ""}
+      ${c.noms && c.noms.length ? `<p class="petits-noms"><b>Petits noms :</b> ${c.noms.map(esc).join(" · ")}</p>` : ""}
+      ${fiches}
+      <details class="fiche-magasin lexique"><summary>Les mots du classeur</summary>
+        <dl>${CLASSEUR.lexique.map(([m, d]) => `<dt>${esc(m)}</dt><dd>${esc(d)}</dd>`).join("")}</dl></details>
+      <p class="source">Sources : ${esc(CLASSEUR.sources.guide)} ; ${esc(CLASSEUR.sources.magasin)} ; ${esc(CLASSEUR.sources.tableaux)}.</p>`;
   }
 
   function rendreOsDePiece(piece) {
@@ -324,6 +413,8 @@
 
       <h3>Transformations bouchères</h3>
       <ul class="transfo">${piece.transformations.map(([n, d]) => `<li><b>${esc(n)}</b><span>${esc(d)}</span></li>`).join("")}</ul>
+
+      ${rendreClasseur(piece)}
 
       ${rendreOsDePiece(piece)}
 
@@ -382,14 +473,12 @@
     choisir(id);
   }
 
+  // Choisir un os : la vue plonge dessus. On reste dans la 3D (sur téléphone, la page ne descend plus
+  // vers la fiche : la carte dans la vue a un bouton « Fiche »).
   function choisirOs(id) {
     allerOs(etat.animal, id);
-    if (window.matchMedia("(max-width: 900px)").matches) {
-      $("panneau").scrollIntoView({ behavior: "smooth", block: "start" });
-    }
   }
   function choisirOsSurModele(id) {
-    etat.montrer = false;
     choisirOs(id);
   }
 
@@ -414,6 +503,26 @@
       if (etat.squelette) aller(etat.animal, null); else allerOs(etat.animal, null);
     }
     if (b.hasAttribute("data-eclater")) { etat.eclate = !etat.eclate; rendre(); }
+    if (b.hasAttribute("data-plein")) basculerPleinEcran();
+    // « Muscles » : toute la viande posée sur le squelette (on quitte la plongée pour la voir en entier)
+    if (b.hasAttribute("data-muscles")) {
+      etat.viande = !etat.viande;
+      if (etat.viande && etat.os) { etat.recadrer = true; allerOs(etat.animal, null); } else { etat.montrer = false; rendre(); }
+    }
+  });
+
+  // Carte de la plongée (dans la vue 3D).
+  $("planche").addEventListener("click", (e) => {
+    const b = e.target.closest("#carte3d button");
+    if (!b) return;
+    if (b.dataset.voir === "muscles") etat.muscles = !etat.muscles;
+    if (b.dataset.voir === "autres") etat.autresOs = !etat.autresOs;
+    if (b.dataset.voir) { etat.montrer = false; rendre(); }
+    if (b.hasAttribute("data-fiche")) {
+      basculerPleinEcran(false);
+      $("panneau").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    if (b.hasAttribute("data-sortir")) { etat.recadrer = true; allerOs(etat.animal, null); }
   });
 
   $("legende").addEventListener("click", (e) => {
@@ -439,6 +548,17 @@
     etat.animal = b.dataset.animal;
     etat.piece = null;
     location.hash = "#" + b.dataset.animal;
+  });
+
+  // Plein écran : la vue 3D et ses boutons prennent tout l'écran, pour se « plonger » dans le squelette.
+  function basculerPleinEcran(oui) {
+    const plein = oui ?? !document.body.classList.contains("plein-ecran-3d");
+    document.body.classList.toggle("plein-ecran-3d", plein);
+    if (plein) window.scrollTo(0, 0);
+    rendreOutils();
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("plein-ecran-3d")) basculerPleinEcran(false);
   });
 
   window.addEventListener("hashchange", () => { lireAdresse(); rendre(); });

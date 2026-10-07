@@ -8,10 +8,10 @@ import vm from "node:vm";
 const APP = process.env.APP_DIR || join(dirname(dirname(fileURLToPath(import.meta.url))), "app");
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js"]) {
+for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js"]) {
   vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx, { filename: f });
 }
-const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D, OS } = ctx.window;
+const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D, OS, CLASSEUR, ANATOMIE } = ctx.window;
 
 const erreurs = [];
 const err = (m) => erreurs.push(m);
@@ -90,26 +90,65 @@ for (const [id, r] of Object.entries(RECETTES)) {
   if (!r.ingredients?.length || !r.etapes?.length) err(`recette ${id}: ingrédients ou étapes manquants`);
 }
 
-// --- squelettes : chaque os a sa fiche complète et son maillage, et ne cite que des pièces existantes
-let nbOs = 0;
+// --- squelettes (data/anatomie.js, chargé à la demande par l'appli) : chaque os a sa fiche complète et
+// son maillage ; chaque pièce posée sur un os a son muscle en volume (sinon la plongée n'en montrerait rien)
+let nbOs = 0, nbMuscles = 0;
+function maillageValide(e, ou) {
+  const n = octets(e.sommets).length / 6;
+  const idx = new Uint16Array(octets(e.triangles).buffer);
+  if (!Number.isInteger(n) || n < 20 || idx.length % 3 || idx.some((i) => i >= n)) err(`${ou}: maillage invalide`);
+  if (e.ombre && octets(e.ombre).length !== n) err(`${ou}: une valeur d'ombre par sommet attendue`);
+  if (e.parties && octets(e.parties).length !== n) err(`${ou}: une « partie » par sommet attendue`);
+  const [lo, hi] = e.boite;
+  if (lo.some((v, i) => !(v < hi[i]))) err(`${ou}: boîte englobante vide`);
+  if (e.pair && lo[2] < -0.01) err(`${ou}: un os ou muscle pair doit être modélisé côté gauche (z > 0)`);
+}
 for (const [animal, liste] of Object.entries(OS || {})) {
-  const m = MODELES3D[animal];
-  if (!m || !m.os) { err(`${animal}: fiches d'os sans squelette 3D`); continue; }
+  const A = ANATOMIE && ANATOMIE[animal];
+  if (!A || !A.os) { err(`${animal}: fiches d'os sans squelette 3D (data/anatomie.js)`); continue; }
   const ids = new Set(liste.map((o) => o.id));
   if (ids.size !== liste.length) err(`${animal}: identifiant d'os en double`);
-  const maillages = new Set(m.os.map((e) => e.id));
+  const maillages = new Set(A.os.map((e) => e.id));
   for (const id of maillages) if (!ids.has(id)) err(`${animal}/os ${id}: maillage sans fiche`);
+  const muscles = A.muscles || [];
+  const piecesMusclees = new Set(muscles.flatMap((m) => m.pieces));
   for (const o of liste) {
     const ou = `${animal}/os ${o.id}`;
     nbOs++;
     if (!maillages.has(o.id)) err(`${ou}: fiche sans maillage 3D`);
     for (const k of ["nom", "savant", "savoir", "desossage", "groupe"]) if (!o[k]) err(`${ou}: champ ${k} vide`);
-    for (const p of o.pieces) if (!PIECES[animal].some((x) => x.id === p)) err(`${ou}: pièce inconnue « ${p} »`);
+    for (const p of o.pieces) {
+      if (!PIECES[animal].some((x) => x.id === p)) err(`${ou}: pièce inconnue « ${p} »`);
+      else if (!piecesMusclees.has(p)) err(`${ou}: la pièce « ${p} » posée sur l'os n'a pas de muscle en volume`);
+    }
   }
-  for (const e of m.os) {
-    const n = octets(e.sommets).length / 6;
-    const idx = new Uint16Array(octets(e.triangles).buffer);
-    if (!Number.isInteger(n) || n < 20 || idx.length % 3 || idx.some((i) => i >= n)) err(`${animal}/os ${e.id}${e.cote}: maillage invalide`);
+  for (const e of A.os) maillageValide(e, `${animal}/os ${e.id}`);
+  for (const m of muscles) {
+    nbMuscles++;
+    maillageValide(m, `${animal}/muscle ${m.id}`);
+    for (const p of m.pieces || []) if (!PIECES[animal].some((x) => x.id === p)) err(`${animal}/muscle ${m.id}: pièce inconnue « ${p} »`);
+  }
+}
+
+// --- classeur de découpe : chaque fiche est rattachée à une vraie pièce et chaque dénomination est complète
+let nbDenominations = 0;
+if (!CLASSEUR) err("data/classeur.js : CLASSEUR absent");
+else {
+  for (const k of ["guide", "magasin", "tableaux"]) if (!CLASSEUR.sources?.[k]) err(`classeur : source ${k} non citée`);
+  if (!CLASSEUR.etoiles || !CLASSEUR.lexique?.length) err("classeur : explication des étoiles ou lexique manquant");
+  for (const animal of Object.keys(CLASSEUR).filter((k) => PIECES[k])) {
+    for (const [id, c] of Object.entries(CLASSEUR[animal])) {
+      const ou = `classeur ${animal}/${id}`;
+      if (!PIECES[animal].some((p) => p.id === id)) err(`${ou}: pièce inconnue`);
+      if (!c.guide?.length && !c.magasin?.length) err(`${ou}: ni dénomination ni fiche magasin`);
+      for (const g of c.guide || []) {
+        nbDenominations++;
+        if (!g.nom || !g.morceau || !g.preparation) err(`${ou}: dénomination incomplète ${JSON.stringify(g).slice(0, 80)}`);
+        if (![1, 2, 3].includes(g.etoiles)) err(`${ou}: étoiles ${g.etoiles} (1 à 3 attendu)`);
+        if (!(g.p >= 1 && g.p <= 51)) err(`${ou}: page du guide ${g.p} hors du guide (1 à 51)`);
+      }
+      for (const f of c.magasin || []) if (!f.titre || !(f.controle || f.parage || f.decoupe || f.barquettes)) err(`${ou}: fiche magasin vide`);
+    }
   }
 }
 
@@ -118,4 +157,4 @@ if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${ANIMAUX.length} animaux, ${nbPieces} pièces, ${Object.keys(RECETTES).length} recettes, ${nbOs} os, modèles 3D et fiches cohérents.`);
+console.log(`OK — ${ANIMAUX.length} animaux, ${nbPieces} pièces, ${Object.keys(RECETTES).length} recettes, ${nbOs} os, ${nbMuscles} muscles en volume, ${nbDenominations} dénominations du classeur, modèles 3D et fiches cohérents.`);

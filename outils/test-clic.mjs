@@ -196,6 +196,44 @@ try {
     const hm = await lire("location.hash");
     if (hm !== "#boeuf/paleron") erreurs.push(`clic sur le muscle du paleron → ${hm}`);
   }
+  // zoom sur l'os choisi : on s'approche jusque contre l'os (même un petit os), et l'os reste à sa place
+  // à l'écran quand on zoome ou qu'on en fait le tour (la vue tourne autour de l'os, pas à côté)
+  const ecart = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) / Math.min(a.vue[2], a.vue[3]);
+  for (const id of ["rotule", "sacrum"]) {
+    await aller(`#boeuf/squelette/${id}`);
+    await attendre(900);
+    const e0 = await lire("window.ATELIER3D.ecranOsChoisi()");
+    if (!e0) { erreurs.push(`zoom sur l'os ${id} : os choisi introuvable`); continue; }
+    for (let i = 0; i < 40; i++) await nav.cdp("Input.dispatchMouseEvent", { type: "mouseWheel", x: e0.x, y: e0.y, deltaX: 0, deltaY: -240 });
+    await attendre(200);
+    const e1 = await lire("window.ATELIER3D.ecranOsChoisi()");
+    if (e1.distance / e1.rayon > 1.25) erreurs.push(`zoom sur l'os ${id} : bloqué à ${(e1.distance / e1.rayon).toFixed(2)} fois son rayon (on doit pouvoir s'en approcher)`);
+    if (ecart(e1, e0) > 0.06) erreurs.push(`zoom sur l'os ${id} : l'os part de ${(ecart(e1, e0) * 100).toFixed(0)} % en zoomant`);
+    const [l, t, w, h] = e1.vue;
+    for (let k = 0; k < 3; k++) await nav.glisser(l + w / 2 - 80, t + h * 0.25, l + w / 2 + 80, t + h * 0.25);
+    await nav.glisser(l + w / 2, t + h * 0.25 + 60, l + w / 2, t + h * 0.25 - 60);
+    const e2 = await lire("window.ATELIER3D.ecranOsChoisi()");
+    if (ecart(e2, e0) > 0.06) erreurs.push(`tour de l'os ${id} : l'os part de ${(ecart(e2, e0) * 100).toFixed(0)} % quand on tourne autour`);
+  }
+  // geste pendant le plongeon (toucher un os puis tourner / « Arrière » tout de suite) : une fois posée,
+  // la vue doit tourner autour de l'os choisi, et pas autour d'un point figé à mi-chemin
+  for (const geste of ["tourner", "Arrière"]) {
+    await aller("#boeuf/squelette");
+    await attendre(700);
+    await lire("window.scrollTo(0, 0)");
+    const ptS = await lire(`window.ATELIER3D.pointEcranOs("sacrum")`);
+    await nav.cliquer(ptS[0], ptS[1]);
+    await attendre(120);
+    const e = await lire("window.ATELIER3D.ecranOsChoisi()");
+    const [l, t, w, h] = e.vue;
+    if (geste === "tourner") await nav.glisser(l + w / 2 - 60, t + h * 0.2, l + w / 2 + 60, t + h * 0.2, 4);
+    else await lire(`[...document.querySelectorAll('#outils3d button')].find((b) => b.textContent.trim() === 'Arrière').click()`);
+    await attendre(1000);
+    await nav.glisser(l + w / 2 - 80, t + h * 0.2, l + w / 2 + 80, t + h * 0.2);
+    const f = await lire("window.ATELIER3D.ecranOsChoisi()");
+    const loin = Math.hypot(f.x - (l + w / 2), f.y - (t + h * 0.4)) / Math.min(w, h);
+    if (loin > 0.03) erreurs.push(`geste « ${geste} » pendant le plongeon sur le sacrum : la vue ne tourne plus autour de l'os (écart ${(loin * 100).toFixed(0)} %)`);
+  }
   // navigation libre : zoom bien plus fort qu'avant, déplacement (clic droit), vue par-dessous
   await aller("#boeuf/squelette/femur");
   await attendre(900);
@@ -301,6 +339,17 @@ try {
     const nomsMuscles = await lire("window.ATELIER3D.musclesAffiches()");
     if (nomsMuscles.length < 2) erreurs.push(`téléphone, plongée sur le fémur en plein écran : ${nomsMuscles.length} nom(s) de muscle visibles (${nomsMuscles})`);
     await nav.capture(join(CAPTURES, "12-mobile-plongee-femur.png"));
+    // pincer à deux doigts (qui glissent un peu, comme de vrais doigts) : zoome sans quitter l'os
+    const p0 = await lire("window.ATELIER3D.ecranOsChoisi()");
+    const [pl, pt, pw, ph] = p0.vue;
+    const doigts = (k) => [{ x: pl + pw / 2 - 20 - 3 * k, y: pt + ph * 0.3, id: 1 }, { x: pl + pw / 2 + 20 + 9 * k, y: pt + ph * 0.3, id: 2 }];
+    await nav.cdp("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: doigts(0) });
+    for (let k = 1; k <= 12; k++) { await nav.cdp("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: doigts(k) }); await attendre(16); }
+    await nav.cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await attendre(200);
+    const p1 = await lire("window.ATELIER3D.ecranOsChoisi()");
+    if (!(p1.zoom > p0.zoom * 1.5)) erreurs.push(`téléphone : pincer ne zoome pas sur le fémur (${p0.zoom.toFixed(1)} → ${p1.zoom.toFixed(1)})`);
+    if (ecart(p1, p0) > 0.03) erreurs.push(`téléphone : pincer fait quitter le fémur (${(ecart(p1, p0) * 100).toFixed(0)} %)`);
   }
 
   if (nav.journal.length) erreurs.push("erreurs JavaScript dans la page :\n   " + nav.journal.join("\n   "));
@@ -321,5 +370,5 @@ if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) sur ${clics} clics :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${clics} pièces et ${OS.boeuf.length} os cliqués en 3D, chacun ouvre la bonne fiche ; plongée sur chaque os avec ses muscles, clic sur un muscle, zoom, déplacement, vue par-dessous, toute la viande, plein écran, classeur, survol, rotation, liste, filtre, comparatif, vue éclatée et téléphone vérifiés. Captures : outils/captures/`);
+console.log(`OK — ${clics} pièces et ${OS.boeuf.length} os cliqués en 3D, chacun ouvre la bonne fiche ; plongée sur chaque os avec ses muscles, clic sur un muscle, zoom et tour autour de l'os choisi, pincement, déplacement, vue par-dessous, toute la viande, plein écran, classeur, survol, rotation, liste, filtre, comparatif, vue éclatée et téléphone vérifiés. Captures : outils/captures/`);
 process.exit(0);

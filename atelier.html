@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atelier 3D — Atelier Boucherie</title>
+  <meta name="description" content="La cuisse de bœuf muscle par muscle, l’os du bassin et ses repères, en 3D : tourner, zoomer, séparer.">
+  <meta name="theme-color" content="#2b2320">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="img/icone-192.png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="atelier.css">
+</head>
+<body class="atelier">
+  <header class="entete">
+    <div class="marque">
+      <a class="retour" id="retour" href="index.html#boeuf/squelette" aria-label="Retour à l’appli">←</a>
+      <div>
+        <h1 id="titre">Atelier 3D</h1>
+        <p id="sous-titre">Chargement…</p>
+      </div>
+    </div>
+    <nav class="onglets" id="vues" aria-label="Autres vues"></nav>
+  </header>
+
+  <main class="atelier-page">
+    <section class="scene" id="scene" aria-label="Vue 3D">
+      <div class="aide3d">Glisse pour tourner · molette ou deux doigts pour zoomer · clic droit ou deux doigts pour déplacer · double-clic pour s’approcher</div>
+      <div class="etiquettes-atelier" id="etiquettes"></div>
+      <div class="carte-choix" id="carte" hidden></div>
+      <div class="boutons-scene">
+        <button type="button" id="b-recadrer" title="Revoir l’ensemble">⟲ Ensemble</button>
+        <button type="button" id="b-plein" title="Plein écran">⛶ Plein écran</button>
+      </div>
+      <p class="chargement" id="chargement">Chargement des muscles et des os…</p>
+    </section>
+
+    <aside class="panneau-atelier" id="panneau">
+      <section class="bloc">
+        <h2>Afficher</h2>
+        <div class="bascules" id="bascules"></div>
+        <label class="curseur" for="separer">Séparer les muscles <output id="separer-val">0 %</output></label>
+        <input type="range" id="separer" min="0" max="100" value="0">
+      </section>
+      <section class="bloc" id="bloc-etapes" hidden>
+        <h2>Comment séparer</h2>
+        <p class="note">Ordre indicatif, à faire valider par ton formateur. Les muscles déjà levés sont posés à côté.</p>
+        <ol class="etapes" id="etapes"></ol>
+        <div class="nav-etapes">
+          <button type="button" id="e-prec">◀ Précédente</button>
+          <button type="button" id="e-suiv">Suivante ▶</button>
+          <button type="button" id="e-zero">Tout remettre</button>
+        </div>
+      </section>
+      <section class="bloc" id="bloc-reperes" hidden>
+        <h2>Repères de l’os</h2>
+        <ul class="liste-atelier" id="reperes"></ul>
+      </section>
+      <section class="bloc">
+        <h2 id="titre-muscles">Muscles</h2>
+        <div id="muscles"></div>
+      </section>
+      <section class="bloc" id="bloc-os">
+        <h2>Os</h2>
+        <ul class="liste-atelier" id="liste-os"></ul>
+      </section>
+      <section class="bloc" id="bloc-etal">
+        <h2>À l’étal traditionnel : idées de présentation</h2>
+        <p class="note">Au comptoir, les étoiles ★ du libre-service ne s’imposent pas (elles sont obligatoires seulement en libre-service) : on conseille le client de vive voix.</p>
+        <div id="etal"></div>
+      </section>
+      <section class="bloc">
+        <h2>Sources</h2>
+        <ul class="sources" id="sources"></ul>
+        <p class="note">Forme des muscles et limites entre eux : modèle simplifié, fabriqué d’après les os et la forme du corps. Volumes et limites à faire valider par un formateur.</p>
+      </section>
+    </aside>
+  </main>
+
+  <script src="vendor/three.min.js"></script>
+  <script src="materiaux3d.js"></script>
+  <script src="data/pieces.js"></script>
+  <script src="data/os.js"></script>
+  <script src="data/atelier.js"></script>
+  <script src="data/atelier-cuisse.js"></script>
+  <script src="atelier.js"></script>
+</body>
+</html>

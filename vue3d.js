@@ -956,9 +956,22 @@
         if (!ms.length) return;
         const vue = VUES_OS[id] || VUES.profil;
         const m = ms.find((x) => x.userData.cote === etatOs.cote) || ms.find((x) => x.userData.cote === "") || ms[0];
-        const c = m.userData.centre.clone().add(m.position);
+        // cadrage sur l'étendue RÉELLE de l'os vue depuis la caméra (sa boîte projetée), pas sur la sphère
+        // qui l'englobe : celle-ci est très lâche pour un os long ou plat (côtes, palette, bassin)
+        const b = m.geometry.boundingBox || (m.geometry.computeBoundingBox(), m.geometry.boundingBox);
+        const c = m.userData.centre.clone().add(m.position);           // pivot : le même centre que partout ailleurs
+        const dir = new T.Vector3(Math.cos(vue.el) * Math.sin(vue.az), Math.sin(vue.el), Math.cos(vue.el) * Math.cos(vue.az));
+        const droite = new T.Vector3().crossVectors(new T.Vector3(0, 1, 0), dir).normalize();
+        const haut = new T.Vector3().crossVectors(dir, droite).normalize();
+        let lx = 0, ly = 0, lz = 0;
+        for (const sx of [b.min.x, b.max.x]) for (const sy of [b.min.y, b.max.y]) for (const sz of [b.min.z, b.max.z]) {
+          const q = new T.Vector3(sx, sy, sz).add(m.position).sub(c);
+          lx = Math.max(lx, Math.abs(q.dot(droite))); ly = Math.max(ly, Math.abs(q.dot(haut))); lz = Math.max(lz, Math.abs(q.dot(dir)));
+        }
         const demi = Math.tan(T.MathUtils.degToRad(camera.fov) / 2);
-        const d = (m.userData.rayon * 1.55) / demi;
+        const demiH = demi * camera.aspect;
+        // marge 25 % ; la carte du bas cache environ un tiers de la hauteur : on compte la hauteur utile
+        const d = Math.max((lx * 1.25) / demiH, (ly * 1.25) / (demi * 0.72)) + lz;
         // le centre de rotation est l'os lui-même ; l'image est remontée (décalage d'écran) pour que l'os
         // apparaisse au-dessus de la carte du bas, à la même place quel que soit le zoom ou l'angle
         aller({ ...vue, zoom: cam.base / Math.max(d, 0.05), centre: c, decal: DECAL_PLONGEE }, duree);

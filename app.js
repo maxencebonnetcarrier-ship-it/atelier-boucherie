@@ -5,6 +5,11 @@
   const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES } = window;
   const OS = window.OS || {};
   const CLASSEUR = window.CLASSEUR || null;
+  // Page atelier 3D (atelier.html) : os et pièces qui y ont une vue détaillée (bœuf seulement).
+  const ATELIER = window.ATELIER || null;
+  const lienAtelierOs = (animal, id) => animal === "boeuf" && ATELIER && ATELIER.os[id] ? `atelier.html?os=${encodeURIComponent(id)}` : null;
+  const regionAtelier = (id) => ATELIER && Object.keys(ATELIER.regions).find((r) => ATELIER.regions[r].pieces[id]);
+  const lienAtelierPiece = (animal, id) => animal === "boeuf" && regionAtelier(id) ? `atelier.html?region=${regionAtelier(id)}&piece=${encodeURIComponent(id)}` : null;
   const RAPIDES = ["griller", "poeler", "rotir", "sauter", "cru"];
   const LENTES = ["braiser", "bouillir"];
 
@@ -196,6 +201,7 @@
         <button type="button" data-voir="muscles" aria-pressed="${etat.muscles}">Muscles</button>
         <button type="button" data-voir="autres" aria-pressed="${etat.autresOs}">Autres os</button>
         <button type="button" data-fiche>Fiche ↓</button>
+        ${lienAtelierOs(etat.animal, os.id) ? `<a class="bouton-lien" href="${lienAtelierOs(etat.animal, os.id)}">En grand ↗</a>` : ""}
         <button type="button" data-sortir aria-label="Revenir au squelette entier">✕</button>
       </div>`;
   }
@@ -263,7 +269,9 @@
     if (etat.squelette) {
       const tous = OS[etat.animal];
       const groupes = [...new Set(tous.map((o) => o.groupe))];
-      liste.innerHTML = `<h2>Tous les os (${tous.length})</h2>` + groupes.map((g) => `<h2 class="sous">${esc(g)}</h2><div class="grille">`
+      const regions = etat.animal === "boeuf" && ATELIER
+        ? `<h2>Atelier 3D</h2><div class="grille"><a class="bouton-lien" href="atelier.html?region=cuisse">Cuisse entière : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=coxal">Os du bassin et ses repères ↗</a><a class="bouton-lien" href="atelier.html?region=epaule">Épaule entière : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=palette">Palette (omoplate) et ses repères ↗</a></div>` : "";
+      liste.innerHTML = regions + `<h2>Tous les os (${tous.length})</h2>` + groupes.map((g) => `<h2 class="sous">${esc(g)}</h2><div class="grille">`
         + tous.filter((o) => o.groupe === g).map((o) =>
           `<button type="button" class="${o.id === etat.os ? "active" : ""}" data-os="${o.id}">${esc(o.nom)}</button>`).join("")
         + `</div>`).join("");
@@ -351,6 +359,7 @@
       <p class="alias">${esc(o.savant)}</p>
       <p>${esc(o.savoir)}</p>
       <div class="conseil"><strong>Au désossage :</strong> ${esc(o.desossage)}</div>
+      ${lienAtelierOs(etat.animal, o.id) ? `<p class="lien-atelier"><a href="${lienAtelierOs(etat.animal, o.id)}">Voir cet os en grand : ses repères et les muscles posés dessus ↗</a></p>` : ""}
       ${o.classeur ? `<div class="classeur-os"><strong>Au classeur :</strong> ${esc(o.classeur)}</div>` : ""}
       ${o.mrs ? `<p class="note-mrs">⚠️ ${esc(window.REGLE_MRS)}</p>` : ""}
       <h3>Pièces posées sur cet os</h3>
@@ -374,8 +383,11 @@
     const champ = (titre, v) => v ? `<dt>${titre}</dt><dd>${Array.isArray(v) ? v.map(esc).join(" · ") : esc(v)}</dd>` : "";
     const fiches = (c.magasin || []).map((f) => `<details class="fiche-magasin"><summary>Fiche magasin : ${esc(f.titre)}</summary>
         <dl>${champ("Contrôle", f.controle)}${champ("Parage", f.parage)}${champ("Découpe", f.decoupe)}${champ("Barquettes", f.barquettes)}${champ("Poids", f.poids)}</dl></details>`).join("");
-    return `<h3>Au rayon : le classeur de découpe</h3>
-      <p class="note-etoiles">${esc(CLASSEUR.etoiles)}</p>
+    return `<h3>En libre-service : le classeur de découpe</h3>
+      <p class="note-etoiles"><b>Libre-service seulement.</b> Ces dénominations et leurs étoiles sont obligatoires en libre-service
+        (barquettes) depuis le 13 décembre 2014, mais facultatives au rayon traditionnel, où le boucher conseille de vive voix
+        (<a href="https://www.reussir.fr/lesmarches/vers-de-nouvelles-denominations-des-viandes-bovines" target="_blank" rel="noopener">Réussir</a>).
+        ${esc(CLASSEUR.etoiles)}</p>
       ${lignes ? `<ul class="classeur">${lignes}</ul>` : ""}
       ${c.noms && c.noms.length ? `<p class="petits-noms"><b>Petits noms :</b> ${c.noms.map(esc).join(" · ")}</p>` : ""}
       ${fiches}
@@ -413,6 +425,8 @@
 
       <h3>Transformations bouchères</h3>
       <ul class="transfo">${piece.transformations.map(([n, d]) => `<li><b>${esc(n)}</b><span>${esc(d)}</span></li>`).join("")}</ul>
+
+      ${lienAtelierPiece(etat.animal, piece.id) ? `<p class="lien-atelier"><a href="${lienAtelierPiece(etat.animal, piece.id)}">Voir ses muscles en 3D, comment les séparer et des idées pour l’étal ↗</a></p>` : ""}
 
       ${rendreClasseur(piece)}
 

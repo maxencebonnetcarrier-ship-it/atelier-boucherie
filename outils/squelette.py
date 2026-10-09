@@ -544,6 +544,42 @@ def repere_palette():
     return Repere(GLENE, U, (0.12, 0.05, 1.0), V_vers=(-1, 0, 0))     # v > 0 = vers l'avant
 
 
+_bords_palette = None
+
+
+def bords_palette():
+    """L'arête (épine), le bord crânial et le bord caudal de la palette, tels que dessinés sur la planche 3,
+    en (u, v) dans repere_palette() (u le long de l'os depuis la cavité glénoïde, v vers l'avant), triés par u."""
+    global _bords_palette
+    if _bords_palette is None:
+        rp = os_planche("palette")["reperes"]
+        R = repere_palette()
+        D_p = (np.asarray(rp["angle_cranial"], float) + np.asarray(rp["angle_caudal"], float)) / 2
+        pose = Placement(np.asarray(rp["glene"], float), D_p, GLENE, DOS_PAL, normale=R.W)
+
+        def uv(liste):
+            pts = np.array([[(P - R.O) @ R.U, (P - R.O) @ R.V] for P in (pose.vers_modele(*q) for q in liste)])
+            return pts[np.argsort(pts[:, 0])]
+        _bords_palette = {"epine": uv(rp["epine"]), "cranial": uv(rp["bord_cranial"]), "caudal": uv(rp["bord_caudal"])}
+    return _bords_palette
+
+
+def le_long_bord(nom, u):
+    """v du bord « nom » de la palette (epine, cranial, caudal) à la hauteur u (prolongé par ses bouts)."""
+    b = bords_palette()[nom]
+    return np.interp(u, b[:, 0], b[:, 1])
+
+
+def cote_epine(X, Y, Z):
+    """Distance (m, dans le plan de la palette) à l'arête : > 0 devant (fosse supra-épineuse, le jumeau à
+    bifteck), < 0 derrière (fosse infra-épineuse, le paleron). L'arête est prolongée au-delà de l'os."""
+    R = repere_palette()
+    O, U, V = R.O, R.U, R.V
+    u = (X - O[0]) * U[0] + (Y - O[1]) * U[1] + (Z - O[2]) * U[2]
+    v = (X - O[0]) * V[0] + (Y - O[1]) * V[1] + (Z - O[2]) * V[2]
+    return v - le_long_bord("epine", u)
+
+
 def _decale(prim, t):
     """Primitive translatée de t."""
     from sdf import Prim

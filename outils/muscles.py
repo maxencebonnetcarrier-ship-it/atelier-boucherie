@@ -17,7 +17,7 @@ import numpy as np
 from formes import boeuf as corps_boeuf
 from sdf import Forme, Prim, Repere, courbe, ell, loft, n_, plaque, GRAND
 from squelette import (ACETABULE, COUDE, EPINES_DORS, GLENE, GRASSET, JARRET, POINTE_FESSE, POINTE_HANCHE,
-                       SACREE, OS_BOEUF, VERT, p3, repere_palette, repere_vertebre)
+                       SACREE, OS_BOEUF, VERT, cote_epine, le_long_bord, p3, repere_palette, repere_vertebre)
 
 Y = np.array([0.0, 1.0, 0.0])
 X = np.array([1.0, 0.0, 0.0])
@@ -190,19 +190,39 @@ def _palette_fosse(vmin, vmax, epaisseur, debord=0.0):
     return R, loft(pts, a, b, haut=R.V, arrondi=0.008)
 
 
+def _palette_entre(bord_arriere, bord_avant, epaisseur, marge=0.008, elargir=0.0, vers_avant=0.0):
+    """Muscle couché sur la face externe de la palette, entre deux de ses bords tels que dessinés sur la
+    planche 3 (« epine », « cranial », « caudal »), à « marge » de chacun ; elargir / vers_avant : il déborde
+    du bord avant (le sus-épineux dépasse le bord crânial de l'os)."""
+    R = repere_palette()
+    dehors = 1.0 if R.W[2] > 0 else -1.0
+    L = np.linalg.norm(p3(-0.505, 1.352, 0.152) - GLENE)
+    us = np.linspace(0.06, L - 0.02, 8)
+    va, vb = le_long_bord(bord_arriere, us) + marge, le_long_bord(bord_avant, us) - marge + elargir
+    vc = (va + vb) / 2 + vers_avant
+    larg = np.maximum((vb - va) / 2, 0.012)
+    pts = [R.point(u, v, dehors * epaisseur * 0.75) for u, v in zip(us, vc)]
+    a = [l_ * f for l_, f in zip(larg, (0.35, 0.65, 0.85, 0.95, 1.0, 1.0, 0.92, 0.75))]
+    b = [epaisseur * f for f in (0.5, 0.8, 1.0, 1.0, 1.0, 0.92, 0.8, 0.6)]
+    return R, loft(pts, a, b, haut=R.V, arrondi=0.008)
+
+
 def paleron():
+    """Muscle infra-épineux : dans la grande fosse, entre le bord caudal et l'arête de la palette."""
     f = Forme()
-    R, l = _palette_fosse(-0.135, -0.004, 0.034)
+    R, l = _palette_entre("caudal", "epine", 0.034)
     f.ajouter(l, 0.02)
     dehors = 1.0 if R.W[2] > 0 else -1.0
-    f.ajouter(loft([R.point(0.08, -0.03, dehors * 0.03), p3(-0.77, 0.995, 0.3)], [0.02, 0.012], [0.018, 0.01],
+    v0 = (le_long_bord("caudal", 0.08) + le_long_bord("epine", 0.08)) / 2
+    f.ajouter(loft([R.point(0.08, v0, dehors * 0.03), p3(-0.77, 0.995, 0.3)], [0.02, 0.012], [0.018, 0.01],
                    haut=Y, arrondi=0.004), 0.015)                                 # tendon vers le gros tubercule
     return f
 
 
 def jumeau_bifteck():
+    """Muscle sus-épineux : dans la petite fosse, devant l'arête de la palette, et débordant du bord crânial."""
     f = Forme()
-    R, l = _palette_fosse(0.006, 0.112, 0.03, debord=0.01)
+    R, l = _palette_entre("epine", "cranial", 0.03, elargir=0.03, vers_avant=0.005)
     f.ajouter(l, 0.02)
     f.ajouter(ell(p3(-0.8, 1.01, 0.265), (0.035, 0.04, 0.03)), 0.02)             # vers le devant de l'épaule
     return f
@@ -331,8 +351,10 @@ MUSCLES_BOEUF = {
     "flanchet": {"forme": flanchet, "pieces": ["flanchet"]},
     "bavette-d-aloyau": {"forme": bavette_aloyau, "pieces": ["bavette-d-aloyau"]},
     "bavette-de-flanchet": {"forme": bavette_flanchet, "pieces": ["bavette-de-flanchet"]},
-    "paleron": {"forme": paleron, "pieces": ["paleron"]},
-    "jumeau-a-bifteck": {"forme": jumeau_bifteck, "pieces": ["jumeau-a-bifteck"]},
+    # l'arête de la palette les sépare (IMAIOS : sus-épineux devant, infra-épineux derrière)
+    "paleron": {"forme": paleron, "pieces": ["paleron"], "domaine": lambda X, Y, Z: cote_epine(X, Y, Z) <= 0},
+    "jumeau-a-bifteck": {"forme": jumeau_bifteck, "pieces": ["jumeau-a-bifteck"],
+                         "domaine": lambda X, Y, Z: cote_epine(X, Y, Z) > 0},
     "macreuse-a-bifteck": {"forme": macreuse_bifteck, "pieces": ["macreuse-a-bifteck"]},
     "macreuse-a-pot-au-feu": {"forme": macreuse_pot, "pieces": ["macreuse-a-pot-au-feu"]},
     "jumeau-a-pot-au-feu": {"forme": jumeau_pot, "pieces": ["jumeau-a-pot-au-feu"]},

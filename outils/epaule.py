@@ -130,9 +130,8 @@ def decouper_epaule(e):
     piece = {mid: lab == (ids.index(mid) + 1) for mid in PIECES_EPAULE}
     # paleron et jumeau à bifteck : départagés par l'arête (l'épine) de la palette, prolongée jusqu'à
     # l'épaule. La face externe de la palette est « divisée par l'épine en une petite fosse crâniale (muscle
-    # sus-épineux) et une grande fosse caudale (muscle infra-épineux) » (IMAIOS). Les germes de muscles.py
-    # ont été posés avant que la palette soit redessinée d'après la planche 3 : sans ce partage, le jumeau
-    # déborde dans la fosse du paleron.
+    # sus-épineux) et une grande fosse caudale (muscle infra-épineux) » (IMAIOS). muscles.py applique la même
+    # règle (squelette.cote_epine) ; on la redit ici pour que l'atelier la garantisse quel que soit l'étiquetage.
     ep_uv = rep["epine"][np.argsort(rep["epine"][:, 0])]
     v_epine = np.interp(u, ep_uv[:, 0], ep_uv[:, 1]).astype(np.float32)
     pj = piece["paleron"] | piece["jumeau-a-bifteck"]

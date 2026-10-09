@@ -14,7 +14,9 @@
 # Parties (couleur) : « corps » = os, « cartilage », « dent ».
 import numpy as np
 
-from sdf import Forme, Repere, boite, cap, courbe, cylindre, ell, loft, n_, plaque
+from sdf import (Forme, Placement, Prim, Repere, boite, cap, cartes_silhouette, courbe, cylindre, ell, loft, n_, plaque, relief,
+                 silhouette, tore, volume_profil)
+from planches_os import OS as OS_PLANCHES, os_planche
 
 Y = np.array([0.0, 1.0, 0.0])
 Z = np.array([0.0, 0.0, 1.0])
@@ -57,11 +59,29 @@ DISQUE = 0.007
 N_COCC = 18
 
 
+# Cou d'après la planche 3 : il part des condyles de l'occipital (derrière le crâne) en descendant en
+# pente douce, puis se redresse à l'entrée de la poitrine pour rejoindre la 1re dorsale.
+NUQUE = courbe([(-1.136, 1.272, 0), (-1.06, 1.215, 0), (-0.975, 1.163, 0), (-0.89, 1.122, 0), (-0.8, 1.093, 0),
+                (-0.725, 1.083, 0), (-0.672, 1.09, 0)], n=200)
+_long_nuque = np.r_[0, np.cumsum(np.linalg.norm(np.diff(NUQUE, axis=0), axis=1))]
+
+
 def _positions():
-    """Centre, tangente et longueur de chaque vertèbre, de l'atlas à la dernière coccygienne."""
+    """Centre, tangente et longueur de chaque vertèbre, de l'atlas à la dernière coccygienne.
+    Les cervicales sont réparties sur la courbe du cou (longueurs à l'échelle) ; les dorsales et la suite
+    sur la ligne vertébrale."""
     out = {}
+    k = (_long_nuque[-1] - 0.5 * DISQUE) / (sum(L_CERV) + 7 * DISQUE)
     s = 0.0
-    for nom, longueurs in (("C", L_CERV), ("T", L_DORS), ("L", L_LOMB)):
+    for i, L0 in enumerate(L_CERV):
+        L = L0 * k
+        sc = s + L / 2
+        j = int(np.clip(np.searchsorted(_long_nuque, sc) - 1, 0, len(NUQUE) - 2))
+        t = (sc - _long_nuque[j]) / (_long_nuque[j + 1] - _long_nuque[j])
+        out[f"C{i + 1}"] = (NUQUE[j] * (1 - t) + NUQUE[j + 1] * t, n_(NUQUE[j + 1] - NUQUE[j]), L)
+        s += L + DISQUE * k
+    s = sum(L_CERV) + 7 * DISQUE
+    for nom, longueurs in (("T", L_DORS), ("L", L_LOMB)):
         for i, L in enumerate(longueurs):
             P, T = le_long(s + L / 2)
             out[f"{nom}{i + 1}"] = (P, T, L)
@@ -166,62 +186,194 @@ def cervicales():
     return f
 
 
-# Bout des apophyses épineuses des dorsales (x, y) : longues au garrot, penchées vers la queue.
-EPINES_DORS = [(-0.618, 1.322), (-0.556, 1.375), (-0.496, 1.400), (-0.438, 1.408), (-0.378, 1.404),
-               (-0.318, 1.396), (-0.258, 1.386), (-0.198, 1.376), (-0.138, 1.366), (-0.082, 1.356),
-               (-0.028, 1.348), (0.024, 1.342), (0.074, 1.338)]
+# ---------------------------------------------------------------- colonne d'après les planches
+# Échelles : planche 3 = S_PL3 m/px (celle du membre avant) ; lombaires et sacrum calés sur les 6 corps de
+# lombaires du modèle (S_LOMB) ; thorax du modèle plus court que celui de la planche : les épines y sont
+# rapprochées (KX_THORAX) sans changer leur hauteur. Planche 13, fig. 57 (vue de dessus) : S_57 m/px.
+S_PL3 = 0.00094
+S_LOMB = 0.000898
+KX_THORAX = 0.8
+S_57 = 0.0018
+R_SAG = Repere(np.zeros(3), (1, 0, 0), (0, 0, 1), V_vers=(0, 1, 0))     # plan du milieu : (u, v) = (x, y)
+
+
+def _lisse(t):
+    t = np.clip(t, 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def _base_dorsale(i):
+    """Pied de l'épine de la dorsale i (0 = T1) dans le modèle : sur l'arc vertébral."""
+    P, T, L = VERT[f"T{i + 1}"]
+    u, v, w = repere_vertebre(P, T)
+    rc = 0.024 + 0.0008 * i
+    return P + v * (rc + 0.024 * 0.8)
+
+
+def _vers_modele_T(i, px, py):
+    """Point de la planche 3 -> modèle (x, y), pour l'épine de la dorsale i, ancrée à son pied."""
+    from planches_os import BASES_T
+    bx, by = BASES_T[f"T{i + 1}"]
+    B = _base_dorsale(i)
+    return np.array([B[0] + KX_THORAX * S_PL3 * (px - bx), B[1] + S_PL3 * (by - py)])
+
+
+def _vers_modele_L(nom, px, py):
+    """Point de la planche 3 -> modèle (x, y), pour la lombaire « nom », ancrée au centre de son corps."""
+    from planches_os import CORPS_L
+    cx, cy = CORPS_L[nom]
+    P = VERT[nom][0]
+    return np.array([P[0] + S_LOMB * (px - cx), P[1] + S_LOMB * (cy - py)])
+
+
+def _epines_dorsales():
+    """Bouts des épines des dorsales dans le modèle (x, y) : pour les muscles (basses côtes, entrecôtes)."""
+    from planches_os import EPINES_T
+    out = []
+    for i in range(13):
+        nom = f"T{i + 1}"
+        if nom in EPINES_T:
+            out.append(tuple(float(c) for c in _vers_modele_T(i, *EPINES_T[nom][0])))
+        else:   # T12, T13 : milieu du bord supérieur de l'épine rectangulaire
+            c = np.asarray(OS_PLANCHES[f"epine_{nom}"]["ajouter"][0], float)
+            haut = c[np.argsort(c[:, 1])[:2]].mean(0)
+            out.append(tuple(float(v) for v in _vers_modele_T(i, *haut)))
+    return out
+
+
+EPINES_DORS = _epines_dorsales()
+
+
+def _plaque_sagittale(contour_px, vers, e, bout=None, e_bout=0.0, r_bout=0.025, haut=None, e_haut=0.0, arrondi=0.0025):
+    """Os plat dans le plan du milieu d'après un contour de planche (vers : pixel -> modèle (x, y)).
+    Épaississements : autour du point « bout » (tubérosité) ou le long du bord supérieur (y > haut)."""
+    pts = np.array([vers(x, y) for x, y in contour_px])
+
+    def ep(u, v):
+        out = np.full(np.shape(u), e, np.float32)
+        if bout is not None:
+            dd = np.sqrt((u - bout[0]) ** 2 + (v - bout[1]) ** 2)
+            out = out + e_bout * (1 - _lisse(dd / r_bout))
+        if haut is not None:
+            out = out + e_haut * _lisse((v - haut) / 0.016)
+        return out
+    return plaque(R_SAG, pts, e, arrondi=arrondi, epaisseurs=ep)
 
 
 def dorsales():
+    """Les 13 dorsales : corps courts, arc, apophyses articulaires et transverses (facettes des côtes) ;
+    épines hautes et penchées vers la queue au garrot, de plus en plus courtes et droites vers les reins,
+    d'après la planche 3 (T12 et T13 déjà rectangulaires comme celles des lombaires)."""
     f = Forme()
+    from planches_os import EPINES_T
     for i in range(13):
         nom = f"T{i + 1}"
-        larg = 0.044 if i < 6 else 0.046
-        vertebre(f, nom, 0.024 + 0.0008 * i, haut_arc=0.024, canal=0.011, epine=EPINES_DORS[i], larg_epine=larg,
-                 ep_epine=0.006 - 0.0001 * i, transv=(0.04, 0.012, 0.009, 0.008, 0.0), articulaires=0.009)
+        vertebre(f, nom, 0.024 + 0.0008 * i, haut_arc=0.024, canal=0.011, epine=None,
+                 transv=(0.04, 0.012, 0.009, 0.008, 0.0), articulaires=0.009)
         P, T, L = VERT[nom]
         u, v, w = repere_vertebre(P, T)
         for sw in (1, -1):    # facettes pour la tête et le tubercule des côtes
             f.ajouter(ell(P - u * L * 0.5 + v * 0.008 + w * sw * 0.02, (0.009, 0.009, 0.006), axes=(u, v, w)), 0.003)
+        contour = os_planche(f"epine_{nom}")["contour"]
+        vers = lambda x, y, i=i: _vers_modele_T(i, x, y)
+        if nom in EPINES_T:
+            bout = vers(*EPINES_T[nom][0])
+            f.ajouter(_plaque_sagittale(contour, vers, 0.0042 + 0.0001 * i, bout=bout, e_bout=0.0045), 0.006)
+        else:
+            haut = max(vers(x, y)[1] for x, y in contour)
+            f.ajouter(_plaque_sagittale(contour, vers, 0.0048, haut=haut - 0.016, e_haut=0.004), 0.006)
     return f
 
 
 def lombaires():
+    """Les 6 lombaires : corps longs, épines rectangulaires à bord supérieur épaissi (planche 3), grandes
+    apophyses articulaires (mamillaires) au pied des épines, et les longues apophyses transverses plates,
+    les « étagères » du faux-filet et du filet (planche 13, vue de dessus)."""
     f = Forme()
+    from planches_os import ARTICULAIRES_L, CORPS_L, MILIEU_57
     for i in range(6):
         nom = f"L{i + 1}"
         P, T, L = VERT[nom]
         u, v, w = repere_vertebre(P, T)
-        tip = P + v * 0.118 + u * (0.004 - 0.002 * i)
-        lg = [0.098, 0.118, 0.13, 0.132, 0.122, 0.095][i]     # « étagères » : les plus longues au milieu
-        vertebre(f, nom, 0.029, haut_arc=0.026, canal=0.012, epine=(tip[0], tip[1]), larg_epine=0.044,
-                 ep_epine=0.0065, transv=(lg, 0.02 + 0.002 * (i == 2), 0.0055, 0.004, 0.012), articulaires=0.012)
+        vertebre(f, nom, 0.029, haut_arc=0.026, canal=0.012, epine=None, transv=None, articulaires=0.01)
+        vers = lambda x, y, nom=nom: _vers_modele_L(nom, x, y)
+        contour = os_planche(f"epine_{nom}")["contour"]
+        haut = max(vers(x, y)[1] for x, y in contour)
+        f.ajouter(_plaque_sagittale(contour, vers, 0.0052, haut=haut - 0.018, e_haut=0.0055), 0.006)
+        # apophyses articulaires craniales avec leur tubercule mamillaire : grosses bosses en dehors, devant l'épine
+        a = vers(*ARTICULAIRES_L[nom])
+        for sw in (1, -1):
+            f.ajouter(ell(p3(a[0] + 0.004, a[1] - 0.004, sw * 0.022), (0.017, 0.009, 0.0095)), 0.012)
+        # apophyse transverse (vue de dessus) : plaque horizontale qui remonte un peu vers son bout
+        d = os_planche(f"transverse_{nom}")
+        niv = d["reperes"]["niveau"]
+        for sw in (1, -1):
+            pts = [(P[0] + S_57 * (py - niv), sw * S_57 * (MILIEU_57 - px)) for px, py in d["contour"]]
+            R = Repere(p3(0, P[1], 0), (1, 0, 0), (0, 1, 0), V_vers=(0, 0, 1))     # (u, v) = (x, z), w = -(y - P.y)
+            centre = lambda uu, vv: -(0.008 + 0.09 * np.clip(np.abs(vv) - 0.03, 0, None))
+            epaisseur = lambda uu, vv: 0.0058 - 0.012 * np.clip(np.abs(vv) - 0.03, 0, 0.13)
+            f.ajouter(plaque(R, pts, 0.0058, arrondi=0.002, decal=centre, epaisseurs=epaisseur), 0.008)
     return f
 
 
 def sacrum():
-    """Sacrum : 5 vertèbres soudées en un coin triangulaire ; ailes articulées avec l'os du bassin,
-    crête dorsale (épines soudées), 4 paires de trous sacrés."""
+    """Sacrum : 5 vertèbres soudées. D'après la planche 3 (profil) : la crête sacrée médiane, haute et festonnée
+    (épines soudées, au niveau de celles des reins), la face dorsale et les 4 paires de trous sacrés ; d'après
+    la planche 13 (dessus) : le contour en coin, les ailes devant (articulées avec l'os du bassin) et les
+    parties latérales qui s'amincissent vers la queue. Corps et canal de la moelle dessous."""
     f = Forme()
+    d = os_planche("sacrum_crete")
+    rp = d["reperes"]
     P, T, L = VERT["S"]
     u, v, w = repere_vertebre(P, T)
     a, b = P - u * L / 2, P + u * L / 2
-    f.ajouter(loft([a + v * 0.004, P - u * 0.04 + v * 0.002, P + u * 0.05, b - v * 0.003],
-                   [0.027, 0.024, 0.02, 0.015], [0.04, 0.034, 0.026, 0.018], haut=v, arrondi=0.005), 0.012)
-    R = Repere(P + v * 0.012, u, v, V_vers=w)
-    tri = [(-L * 0.5, -0.03), (-L * 0.52, 0.0), (-L * 0.5, 0.105), (-L * 0.32, 0.105), (-L * 0.12, 0.06), (L * 0.5, 0.026),
-           (L * 0.5, -0.026), (-L * 0.12, -0.06), (-L * 0.32, -0.105), (-L * 0.5, -0.105)]
-    f.ajouter(plaque(R, tri, 0.013, arrondi=0.006), 0.012)
-    for sw in (1, -1):    # surface d'articulation avec l'ilium, épaisse
-        f.ajouter(ell(P - u * L * 0.38 + v * 0.02 + w * sw * 0.085, (0.04, 0.02, 0.022), axes=(u, v, w)), 0.012)
-    Rc = Repere(P, u, w, V_vers=v)
-    crete = [(-L * 0.48, 0.03), (L * 0.46, 0.02), (L * 0.42, 0.045), (-L * 0.1, 0.064), (-L * 0.46, 0.07)]
-    f.ajouter(plaque(Rc, crete, 0.0055, arrondi=0.0025), 0.01)
-    f.creuser(loft([a - u * 0.02 + v * 0.028, b + u * 0.02 + v * 0.022], [0.011, 0.007], [0.014, 0.008], haut=v), 0.002)
-    for k in range(4):    # trous sacrés dorsaux
-        c = a + u * (0.055 + 0.052 * k) + v * 0.02
+    pose = Placement(rp["axe_avant"], rp["axe_arriere"], a, b, normale=Z)
+    vers = lambda x, y: pose.vers_modele(x, y)[:2]
+    # corps (promontoire épais devant), sous la face dorsale
+    f.ajouter(loft([a + v * 0.004, P - u * 0.06 + v * 0.002, P + u * 0.05, b - v * 0.002],
+                   [0.026, 0.023, 0.018, 0.013], [0.036, 0.03, 0.022, 0.015], haut=v, arrondi=0.005), 0.012)
+    # face dorsale (hauteur au-dessus de l'axe, le long de l'axe) relevée sur la planche 3
+    fd = np.array([[float((pose.vers_modele(x, y) - a) @ u), float((pose.vers_modele(x, y) - a) @ v)]
+                   for x, y in rp["face_dorsale"]])
+    haut_dos = lambda uu: np.interp(uu, fd[:, 0], fd[:, 1])
+    # contour vu de dessus (moitié gauche + son reflet) : u le long de l'axe, w en travers
+    dd = os_planche("sacrum_dessus")
+    av, ar = dd["reperes"]["avant"], dd["reperes"]["arriere"]
+    ku = L / (ar - av)
+    from planches_os import MILIEU_57
+    gauche = [((py - av) * ku, (MILIEU_57 - px) * 0.0017) for px, py in dd["contour"]]
+    gauche = [(uu, ww) for uu, ww in gauche if ww > 0.001]
+    gauche.sort(key=lambda t: t[0])
+    contour = [(0.0, 0.0)] + gauche + [(L, 0.0)] + [(uu, -ww) for uu, ww in gauche[::-1]]
+    R = Repere(a, u, v, V_vers=w)       # (U, V) = (le long, en travers), W = vers le bas
+    gu = np.array([g[0] for g in gauche]); gw = np.array([g[1] for g in gauche])
+    demi_l = lambda uu: np.maximum(np.interp(uu, gu, gw), 0.02)
+    # face dorsale un peu bombée au milieu ; face ventrale creusée (bassin) qui remonte vers les bords : les
+    # parties latérales du sacrum sont minces, le corps (au milieu) est épais
+    def dessus(uu, ww):
+        return haut_dos(uu) - 0.008 * np.clip(np.abs(ww) / demi_l(uu), 0, 1) ** 2
+    def dessous(uu, ww):
+        fond = -(0.012 + 0.02 * (1 - np.clip(uu / L, 0, 1)))      # 9 cm d'épaisseur devant, 4 à 5 cm au bout
+        r = np.clip(np.abs(ww) / demi_l(uu), 0, 1)
+        return fond + (dessus(uu, ww) - 0.01 - fond) * r ** 1.6
+    centre = lambda uu, ww: -((dessus(uu, ww) + dessous(uu, ww)) / 2)
+    ep = lambda uu, ww: np.maximum((dessus(uu, ww) - dessous(uu, ww)) / 2, 0.0045)
+    f.ajouter(plaque(R, contour, 0.03, arrondi=0.004, decal=centre, epaisseurs=ep), 0.012)
+    # crête sacrée médiane, épaissie au sommet (tubercules des épines soudées)
+    crete = d["contour"]
+    sommet = max(vers(x, y)[1] for x, y in crete)
+    f.ajouter(_plaque_sagittale(crete, vers, 0.0055, haut=sommet - 0.03, e_haut=0.0035), 0.008)
+    # apophyses articulaires craniales (contre la 6e lombaire)
+    for sw in (1, -1):
+        f.ajouter(ell(a + u * 0.014 + v * (haut_dos(0.014) - 0.002) + w * sw * 0.024, (0.016, 0.008, 0.01), axes=(u, v, w)), 0.012)
+    # canal de la moelle, et 4 paires de trous sacrés dorsaux (relevés sur la planche 3)
+    f.creuser(loft([a - u * 0.02 + v * 0.03, b + u * 0.02 + v * 0.02], [0.011, 0.006], [0.014, 0.007], haut=v), 0.002)
+    for q in rp["trous"]:
+        c = pose.vers_modele(*q)
+        uu = float((c - a) @ u)
+        c = a + u * uu + v * haut_dos(uu)
         for sw in (1, -1):
-            f.creuser(cylindre(c + w * sw * 0.034 - v * 0.05, c + w * sw * 0.034 + v * 0.05, 0.0065), 0.002)
+            f.creuser(cylindre(c + w * sw * 0.032 - v * 0.03, c + w * sw * 0.032 + v * 0.03, 0.0062), 0.002)
     return f
 
 
@@ -243,84 +395,148 @@ def coccygiennes():
 
 
 # ================================================================ thorax
+# Cage thoracique d'après la planche 3 (Ellenberger-Baum) : côtes larges (5 à 6 cm en bas) et presque
+# jointives, penchées vers l'arrière de 12 à 17°, jonction os / cartilage près du sternum pour les 8 côtes
+# « vraies », de plus en plus haute pour les 5 « asternales » (à mi-hauteur pour la 13e) dont les
+# cartilages forment l'arc costal. La largeur de la cage suit l'intérieur de la paroi du corps (sous
+# le plat de côtes, 4 à 5 cm de viande) ; sous l'épaule, les côtes restent en dedans de la palette.
+Y_STERNUM = 0.69                      # face dorsale des sternèbres
+X_STERNEBRES = [-0.705, -0.64, -0.565, -0.49, -0.415, -0.34, -0.265]       # 7 sternèbres (manubrium d'abord)
+X_XIPHOIDE = -0.13
+
+_corps_cache = None
+
+
+def _corps():
+    global _corps_cache
+    if _corps_cache is None:
+        from formes import boeuf
+        _corps_cache = boeuf()
+    return _corps_cache
+
+
+def _z_paroi(x, y, epaisseur):
+    """Côté gauche : plus grand z tel que le point (x, y, z) soit à « epaisseur » sous la peau."""
+    zs = np.linspace(0.0, 0.55, 221, dtype=np.float32)
+    P = np.stack([np.full_like(zs, x), np.full_like(zs, y), zs], -1)
+    d = _corps().distance(P)
+    ok = zs[d < -epaisseur]
+    return float(ok.max()) if len(ok) else 0.05
+
+
+def _z_sous_palette(x, y):
+    """Plan de la palette (côté gauche) : les côtes de devant passent 4 cm en dedans."""
+    R = repere_palette()
+    W = R.W
+    # point du plan à (x, y) : W . (P - O) = 0
+    z = R.O[2] - (W[0] * (x - R.O[0]) + W[1] * (y - R.O[1])) / W[2]
+    dans = (x < DOS_PAL[0] + 0.16) and (y > GLENE[1] - 0.2)
+    return z - 0.045 if dans else 9.0
+
+
 def _rib(i):
-    """Points de contrôle de la côte i (0 = 1re côte), côté gauche ; renvoie (partie osseuse, cartilage)."""
+    """Ligne médiane de la côte i (0 = 1re), côté gauche : (points de la partie osseuse, du cartilage)."""
     P, T, L = VERT[f"T{i + 1}"]
-    x0, y0 = P[0] - L * 0.5, P[1] + 0.004             # tête de côte : entre T(i-1) et T(i)
-    zmax = [0.17, 0.205, 0.235, 0.262, 0.283, 0.3, 0.312, 0.32, 0.326, 0.328, 0.326, 0.32, 0.31][i]
-    ymax = [0.95, 0.96, 0.965, 0.97, 0.975, 0.98, 0.985, 0.99, 0.995, 1.0, 1.01, 1.02, 1.03][i]
-    recul = 0.03 + 0.011 * i                          # la côte part vers l'arrière en descendant
-    tete = (x0, y0, 0.026)
-    tub = (x0 + 0.004, y0 + 0.012, 0.062)             # tubercule, sur l'apophyse transverse
-    angle = (x0 + 0.012, y0 - 0.035, 0.06 + zmax * 0.3)
-    milieu = (x0 + recul * 0.55, ymax, zmax)
-    if i < 8:     # côtes « vraies » : le cartilage rejoint le sternum
-        xs = [-0.648, -0.622, -0.564, -0.491, -0.418, -0.345, -0.272, -0.212][i]
-        ys = 0.765 - 0.008 * i
-        jonction = (x0 + recul * 0.85, 0.8 + 0.012 * i, 0.155 + 0.012 * i - 0.004 * max(0, i - 5) * 3)
-        bas = (x0 + recul * 0.95, ymax - (ymax - jonction[1]) * 0.55, zmax * 0.82)
-        fin = (xs, ys, 0.032)
-        cart = [jonction, ((jonction[0] + xs) / 2, (jonction[1] + ys) / 2 - 0.012, (jonction[2] + 0.032) / 2 + 0.01), fin]
-    else:         # côtes « asternales » : leurs cartilages forment l'arc costal
-        k = i - 8
-        jonction = (x0 + recul * 0.85, 0.83 + 0.035 * k, zmax * 0.72)
-        bas = (x0 + recul * 0.95, ymax - (ymax - jonction[1]) * 0.55, zmax * 0.86)
-        fin = (x0 + recul * 0.4 - 0.03, 0.75 + 0.05 * k, zmax * 0.48)
-        cart = [jonction, ((jonction[0] + fin[0]) / 2 + 0.005, (jonction[1] + fin[1]) / 2 - 0.01, (jonction[2] + fin[2]) / 2 + 0.01), fin]
-    if i == 0:    # 1re côte : courte et presque droite
-        angle = (x0 + 0.006, y0 - 0.03, 0.09)
-        milieu = (x0 + 0.012, 0.98, 0.14)
-        bas = (x0 + 0.018, 0.87, 0.135)
-        jonction = (x0 + 0.02, 0.82, 0.11)
-        cart = [jonction, (x0 + 0.02, 0.79, 0.07), (-0.648, 0.772, 0.03)]
-    return [tete, tub, angle, milieu, bas, jonction], cart
+    x0, y0 = P[0] - L * 0.5, P[1] + 0.004                      # tête de côte : entre deux vertèbres
+    prof = y0 - Y_STERNUM
+    fj = [0.86, 0.87, 0.875, 0.88, 0.88, 0.88, 0.875, 0.865, 0.83, 0.77, 0.7, 0.62, 0.52][i]   # hauteur de la jonction
+    recul = [0.012, 0.035, 0.055, 0.075, 0.09, 0.105, 0.12, 0.135, 0.15, 0.162, 0.172, 0.18, 0.186][i]
+    xj, yj = x0 + recul, y0 - prof * fj
+    pts = []
+    for t in np.linspace(0, 1, 9):
+        x = x0 + recul * (t ** 1.15) - 0.012 * np.sin(np.pi * t) * (i > 0)   # légère courbure, bombée vers l'avant
+        y = y0 - prof * fj * t
+        pts.append([x, y])
+    # la cage est étroite devant (1re côte) et s'élargit jusqu'à la 7e ; elle se resserre vers le sternum
+    zlim = [0.125, 0.165, 0.2, 0.228, 0.255, 0.28, 0.305, 0.325, 0.345, 0.36, 0.37, 0.375, 0.375][i]
+    zs = []
+    for k, (x, y) in enumerate(pts):
+        t = k / 8
+        if t == 0:
+            z = 0.026
+        else:
+            zp = min(_z_paroi(x, y, 0.045 + 0.05 * max(0, 0.3 - t)), _z_sous_palette(x, y))
+            zp = min(zp, zlim * (1 - 0.28 * np.clip((t - 0.62) / 0.38, 0, 1) ** 1.5 * (i < 9)))
+            zarc = 0.026 + (zp - 0.026) * np.sin(min(1.0, t / 0.42) * np.pi / 2) ** 0.8     # angle de la côte puis la paroi
+            z = min(zarc, zp)
+        zs.append(z)
+    zs = np.convolve(np.r_[zs[0], zs, zs[-1]], [0.25, 0.5, 0.25], "valid").tolist()           # sans à-coups
+    zs[0] = 0.026
+    os_pts = [p3(x, y, z) for (x, y), z in zip(pts, zs)]
+    if i < 8:                       # côtes « vraies » : cartilage jusqu'au sternum
+        xs = X_STERNEBRES[min(i, 6)] + (0.035 if i == 7 else 0.0)
+        fin = p3(xs, Y_STERNUM + 0.012, 0.035)
+        j = os_pts[-1]
+        cart = [j, p3((j[0] + xs) / 2 + 0.015, (j[1] + fin[1]) / 2 - 0.01, (j[2] + 0.035) / 2 + 0.02), fin]
+    else:                           # côtes « asternales » : leur cartilage rejoint celui de la côte d'avant (arc costal)
+        j = os_pts[-1]
+        prev = _rib_cache[i - 1][1]
+        cible = prev[len(prev) // 2] if len(prev) > 2 else prev[-1]
+        cart = [j, (j + cible) / 2 + p3(0.0, -0.02, 0.0), cible + p3(0.012, 0.006, 0.004)]
+    return os_pts, cart
+
+
+_rib_cache = []
+
+
+def _ribs():
+    if not _rib_cache:
+        for i in range(13):
+            _rib_cache.append(_rib(i))
+    return _rib_cache
 
 
 def cotes():
-    """Les 13 côtes gauches : plates et larges (surtout en bas), tête et tubercule en haut, cartilage en bas."""
+    """Les 13 côtes gauches : tête et tubercule contre les vertèbres, corps large et plat, cartilage en bas."""
     f = Forme()
-    for i in range(13):
-        os_pts, cart = _rib(i)
-        c = courbe(os_pts, n=26)
+    for i, (os_pts, cart) in enumerate(_ribs()):
+        c = courbe(os_pts, n=30)
         n = len(c)
         t = np.linspace(0, 1, n)
-        large = [0.014, 0.018, 0.021, 0.023, 0.024, 0.024, 0.023, 0.022, 0.021, 0.02, 0.018, 0.016, 0.013][i]
-        a = 0.008 + (large - 0.008) * np.sin(np.clip(t * 1.25, 0, 1) * np.pi / 2)   # demi-largeur (le long du corps)
-        b = 0.0075 - 0.002 * t                                                        # demi-épaisseur
-        a[0], b[0] = 0.012, 0.011                                                    # tête de la côte
+        large = [0.016, 0.02, 0.023, 0.025, 0.027, 0.028, 0.028, 0.028, 0.027, 0.025, 0.023, 0.02, 0.016][i]
+        a = 0.009 + (large - 0.009) * np.sin(np.clip(t * 1.4, 0, 1) * np.pi / 2)      # demi-largeur (le long du corps)
+        a = a * (1 - 0.12 * np.clip((t - 0.8) / 0.2, 0, 1))
+        b = 0.0085 - 0.0042 * np.clip(t * 1.3, 0, 1)                                   # demi-épaisseur : plate en bas
+        a[0], b[0] = 0.012, 0.011                                                     # tête de la côte
+        # « haut » = direction qui pointe vers l'avant dans le plan de la paroi : la côte est plate contre la paroi
         f.ajouter(loft(c, a, b, haut=(1, 0, 0), arrondi=0.0025), 0.003)
-        f.ajouter(ell(os_pts[1], (0.009, 0.008, 0.008)), 0.004)                      # tubercule
-        cc = courbe(cart, n=10)
-        ac = np.linspace(a[-1] * 0.85, 0.008, len(cc))
-        f.ajouter(loft(cc, ac, np.full(len(cc), 0.0065), haut=(1, 0, 0), arrondi=0.002), 0.003, "cartilage")
+        f.ajouter(ell(os_pts[0] + p3(0.004, 0.012, 0.03), (0.009, 0.008, 0.008)), 0.004)   # tubercule
+        cc = courbe(cart, n=12)
+        ac = np.linspace(a[-1] * 0.8, 0.008, len(cc))
+        f.ajouter(loft(cc, ac, np.full(len(cc), 0.006), haut=(1, 0, 0), arrondi=0.002), 0.003, "cartilage")
     return f
 
 
 def sternum():
+    """Sternum : 7 sternèbres (la 1re, le manubrium, pointe vers l'avant), cartilages entre elles,
+    appendice xiphoïde (cartilage large et plat) en arrière."""
     f = Forme()
-    # manubrium (1re sternèbre) : aplati sur les côtés, pointe vers l'avant
-    f.ajouter(loft([p3(-0.70, 0.79), p3(-0.665, 0.775), p3(-0.635, 0.765)], [0.022, 0.024, 0.02], [0.011, 0.014, 0.016],
-                   haut=Y, arrondi=0.004), 0.006)
-    # 6 sternèbres suivantes : de plus en plus larges et plates, séparées par du cartilage
-    xs = np.linspace(-0.6, -0.235, 6)
-    for k, x in enumerate(xs):
-        y = 0.758 - 0.012 * k
-        f.ajouter(boite(p3(x, y), (0.026, 0.012 - 0.0006 * k, 0.02 + 0.005 * k), arrondi=0.008), 0.004)
-        if k < 5:
-            f.ajouter(boite(p3(x + 0.036, y - 0.006), (0.01, 0.009, 0.017 + 0.005 * k), arrondi=0.006), 0.004, "cartilage")
-    f.ajouter(boite(p3(-0.62, 0.762), (0.01, 0.01, 0.018), arrondi=0.006), 0.004, "cartilage")
-    # appendice xiphoïde : cartilage large et plat
-    f.ajouter(ell(p3(-0.15, 0.7), (0.065, 0.007, 0.045)), 0.01, "cartilage")
-    f.ajouter(cap(p3(-0.215, 0.7), p3(-0.18, 0.7), 0.012, 0.01), 0.008)
+    xs = X_STERNEBRES
+    f.ajouter(loft([p3(xs[0] - 0.035, Y_STERNUM + 0.03), p3(xs[0], Y_STERNUM + 0.008), p3(xs[0] + 0.025, Y_STERNUM)],
+                   [0.022, 0.024, 0.02], [0.011, 0.014, 0.016], haut=Y, arrondi=0.004), 0.006)
+    for k, x in enumerate(xs[1:]):
+        y = Y_STERNUM - 0.006 - 0.004 * k
+        f.ajouter(boite(p3(x, y), (0.027, 0.013 - 0.0005 * k, 0.022 + 0.005 * k), arrondi=0.008), 0.004)
+    for k in range(len(xs) - 1):
+        xm = (xs[k] + xs[k + 1]) / 2
+        f.ajouter(boite(p3(xm, Y_STERNUM - 0.008 - 0.004 * k), (0.01, 0.009, 0.018 + 0.005 * k), arrondi=0.006), 0.004, "cartilage")
+    f.ajouter(ell(p3(X_XIPHOIDE, Y_STERNUM - 0.04), (0.07, 0.007, 0.05)), 0.01, "cartilage")       # appendice xiphoïde
+    f.ajouter(cap(p3(xs[-1] + 0.03, Y_STERNUM - 0.035), p3(X_XIPHOIDE - 0.04, Y_STERNUM - 0.04), 0.012, 0.01), 0.008)
     return f
 
 
 # ================================================================ membre avant (côté gauche)
 GLENE = p3(-0.745, 0.985, 0.25)          # cavité glénoïde (articulation de l'épaule)
 DOS_PAL = p3(-0.505, 1.352, 0.152)       # milieu du bord dorsal de la palette
-COUDE = p3(-0.575, 0.705, 0.236)         # condyle de l'humérus (articulation du coude)
-CARPE = p3(-0.6, 0.40, 0.205)
-BOULET_AV = p3(-0.611, 0.135, 0.2)
+BOULET_AV = p3(-0.611, 0.135, 0.2)       # boulet (articulation canon / 1re phalange)
+# Longueurs des os du membre avant d'après la planche 3 (Ellenberger-Baum), à une même échelle :
+# S_AV mètres par pixel de planche (palette, radius, canon et doigt y tombent juste ensemble).
+S_AV = 0.00094
+HUM_TETE = GLENE - n_(DOS_PAL - GLENE) * 0.03 + p3(0.006, 0.0, 0.0)     # centre de la tête de l'humérus
+COUDE = HUM_TETE + n_(p3(0.18, -0.256, -0.0205)) * (253 * S_AV)          # condyle de l'humérus (coude)
+CARPE = COUDE + n_(p3(BOULET_AV[0] - 0.002 - COUDE[0], -0.328, 0.208 - COUDE[2])) * (352 * S_AV)   # bas du radius (carpe), d'aplomb
+CANON_AV_HAUT = CARPE + n_(BOULET_AV - CARPE) * (56 * S_AV)                 # haut du canon, sous le carpe
+PINCE_AV = BOULET_AV + p3(-0.068, -0.12, 0.0)                             # bout de l'onglon, dans le sabot
 
 
 def repere_palette():
@@ -328,38 +544,70 @@ def repere_palette():
     return Repere(GLENE, U, (0.12, 0.05, 1.0), V_vers=(-1, 0, 0))     # v > 0 = vers l'avant
 
 
-def palette():
-    """Palette (omoplate, scapula) : lame triangulaire, épine (l'arête) qui sépare la petite fosse de
-    devant (dessus de palette) de la grande fosse de derrière (paleron), acromion, col, cavité
-    glénoïde, tubercule supraglénoïdien, cartilage de la palette."""
-    f = Forme()
-    R = repere_palette()
-    L = np.linalg.norm(DOS_PAL - GLENE)
-    lame = [(0.05, -0.03), (0.05, 0.026), (0.12, 0.048), (0.24, 0.07), (0.36, 0.088), (L - 0.012, 0.098),
-            (L, 0.06), (L + 0.002, -0.04), (L - 0.01, -0.12), (L - 0.03, -0.145), (0.34, -0.128), (0.22, -0.094),
-            (0.12, -0.06)]
+def _decale(prim, t):
+    """Primitive translatée de t."""
+    from sdf import Prim
+    t32 = np.asarray(t, np.float32)
+    return Prim(lambda P: prim.f(P - t32), prim.lo + t, prim.hi + t)
 
-    f.ajouter(plaque(R, lame, 0.0052, arrondi=0.0035), 0.004)
-    bord_caudal = courbe([R.point(0.08, -0.042), R.point(0.16, -0.075), R.point(0.26, -0.104), R.point(0.36, -0.13),
-                          R.point(L - 0.03, -0.142)], n=14)
-    f.ajouter(loft(bord_caudal, [0.014, 0.012, 0.01, 0.008, 0.006], [0.013, 0.012, 0.01, 0.008, 0.006], haut=R.V,
-                   arrondi=0.003), 0.012)
-    bord_cranial = courbe([R.point(0.07, 0.03), R.point(0.18, 0.058), R.point(0.3, 0.08), R.point(L - 0.02, 0.097)], n=10)
-    f.ajouter(loft(bord_cranial, [0.007, 0.006, 0.005, 0.005], [0.0075, 0.0065, 0.006, 0.006], haut=R.V, arrondi=0.002), 0.008)
-    dehors = 1.0 if R.W[2] > 0 else -1.0
-    epine = [(0.09, 0.0), (0.1, 0.022), (0.2, 0.036), (0.27, 0.04), (0.34, 0.03), (L - 0.02, 0.012), (L - 0.02, 0.0)]
-    R_ep = Repere(R.point(0, 0.006), R.U, R.V, V_vers=R.W * dehors)
-    f.ajouter(plaque(R_ep, epine, 0.0055, arrondi=0.0025), 0.006)
-    f.ajouter(ell(R.point(0.255, 0.004, 0.042 * dehors), (0.04, 0.009, 0.007), axes=(R.U, R.V, R.W)), 0.008)   # tubérosité
-    f.ajouter(ell(R.point(0.095, 0.004, 0.024 * dehors), (0.02, 0.007, 0.011), axes=(R.U, R.V, R.W)), 0.006)   # acromion
-    f.ajouter(loft([R.point(0.13, -0.006), R.point(0.06, -0.002), R.point(0.015, 0.002)], [0.03, 0.03, 0.04],
-                   [0.014, 0.018, 0.03], haut=R.V, arrondi=0.005), 0.012)                                       # col
-    f.creuser(ell(R.point(-0.022, 0.0), (0.032, 0.03, 0.026), axes=(R.U, R.V, R.W)), 0.005)                      # cavité glénoïde
-    f.ajouter(ell(R.point(0.022, 0.034, 0.002), (0.017, 0.013, 0.013), axes=(R.U, R.V, R.W)), 0.006)
-    f.ajouter(ell(R.point(0.03, 0.03, -0.015 * dehors), (0.011, 0.009, 0.009), axes=(R.U, R.V, R.W)), 0.005)    # coracoïde
-    cart = [(L - 0.004, 0.096), (L + 0.055, 0.09), (L + 0.062, -0.02), (L + 0.045, -0.13), (L - 0.012, -0.142),
-            (L + 0.002, -0.04), (L, 0.06)]
-    f.ajouter(plaque(R, cart, 0.0045, arrondi=0.0025), 0.004, "cartilage")
+
+def _pts(pose, liste):
+    return [pose.vers_modele(x, y) for x, y in liste]
+
+
+def _uv(pose, P):
+    q = np.asarray(P) - pose.A
+    return float(q @ pose.U), float(q @ pose.V)
+
+
+def palette():
+    """Palette (omoplate, scapula) d'après son contour sur la planche 3 (Ellenberger-Baum, domaine public) :
+    lame triangulaire, épine (l'arête) qui sépare la petite fosse de devant (dessus de palette) de la
+    grande fosse de derrière (paleron), acromion, col, cavité glénoïde, tubercule supraglénoïdien,
+    cartilage de la palette le long du bord dorsal."""
+    f = Forme()
+    d = os_planche("palette")
+    rp = d["reperes"]
+    G_p = np.asarray(rp["glene"], float)
+    D_p = (np.asarray(rp["angle_cranial"], float) + np.asarray(rp["angle_caudal"], float)) / 2
+    R = repere_palette()
+    pose = Placement(G_p, D_p, GLENE, DOS_PAL, normale=R.W)
+    mpx = pose.s                                         # mètres par pixel
+    # lame : os plat, ~5 mm de demi-épaisseur, bords arrondis
+    lame = cartes_silhouette(d["contour"], forme="plat", plat=0.0052 / mpx)
+    f.ajouter(silhouette(lame, pose), 0.004)
+    # bords épaissis : bord caudal (le plus épais, en bourrelet), bord crânial plus mince
+    for nom_bord, e0, e1 in (("bord_caudal", 0.006, 0.0125), ("bord_cranial", 0.0048, 0.008)):
+        pts = _pts(pose, rp[nom_bord])
+        cb = courbe(pts, n=18)
+        e = np.linspace(e0, e1, len(cb))
+        f.ajouter(loft(cb, e, e * 0.9, haut=pose.W, arrondi=0.0025), 0.012)
+    # épine : crête perpendiculaire à la lame, la plus haute au tiers inférieur, qui finit en acromion
+    ep = _pts(pose, rp["epine"])                        # du bas (près du col) vers le haut
+    ce = courbe(ep, n=18)
+    t = np.linspace(0, 1, len(ce))
+    haut_ep = 0.006 + 0.028 * np.sin(np.clip((t - 0.04) / 0.86, 0, 1) * np.pi) ** 0.7 * (1 - 0.5 * t)
+    f.ajouter(loft([p_ + pose.W * h * 0.5 for p_, h in zip(ce, haut_ep)], haut_ep * 0.5 + 0.003, np.full(len(ce), 0.0042),
+                   haut=pose.W, arrondi=0.002), 0.006)
+    # tubérosité de l'épine (bourrelet au bord libre) et acromion (court, au-dessus de l'articulation)
+    k = int(len(ce) * 0.42)
+    f.ajouter(ell(ce[k] + pose.W * (haut_ep[k] + 0.002), (0.045, 0.008, 0.007), axes=(n_(ce[k + 2] - ce[k - 2]), pose.V, pose.W)), 0.008)
+    f.ajouter(ell(ce[1] + pose.W * 0.02 + pose.U * 0.004, (0.018, 0.008, 0.012), axes=(pose.U, pose.V, pose.W)), 0.008)
+    # col et cavité glénoïde (creux ovale tourné vers l'humérus), tubercule supraglénoïdien, coracoïde
+    f.ajouter(ell(GLENE + pose.U * 0.03, (0.034, 0.03, 0.022), axes=(pose.U, pose.V, pose.W)), 0.014)
+    f.ajouter(ell(GLENE + pose.U * 0.012, (0.024, 0.034, 0.03), axes=(pose.U, pose.V, pose.W)), 0.01)
+    f.creuser(ell(GLENE - pose.U * 0.016, (0.02, 0.028, 0.024), axes=(pose.U, pose.V, pose.W)), 0.005)
+    f.ajouter(ell(GLENE + pose.U * 0.028 + pose.V * 0.03, (0.016, 0.012, 0.013), axes=(pose.U, pose.V, pose.W)), 0.006)
+    f.ajouter(ell(GLENE + pose.U * 0.03 + pose.V * 0.026 - pose.W * 0.016, (0.01, 0.008, 0.008), axes=(pose.U, pose.V, pose.W)), 0.005)
+    # cartilage de la palette : bande qui prolonge le bord dorsal (environ 4 cm)
+    bord = np.asarray(OS_PLANCHES["palette"]["barrieres"][0], float)
+    centre_p = G_p
+    hors = []
+    for q in bord:
+        dq = q - centre_p
+        hors.append(q + dq / np.linalg.norm(dq) * (0.04 / mpx))
+    poly = [_uv(pose, pose.vers_modele(*q)) for q in list(bord) + hors[::-1]]
+    f.ajouter(plaque(Repere(pose.A, pose.U, pose.W, V_vers=pose.V), poly, 0.0042, arrondi=0.0025), 0.004, "cartilage")
     return f
 
 
@@ -370,52 +618,61 @@ def os_long(f, axe, sections, haut, arrondi=0.004, k=0.006):
     f.ajouter(loft(axe, a, b, haut=haut, arrondi=arrondi), k)
 
 
+def os_planche3d(f, nom, cle_a, cle_b, A, B, forme="rond", k=1.0, plat=None, zones=(), normale=Z, kj=0.006,
+                 partie="corps", epaisseur=1.0, decal=0.0, decal_b=None):
+    """Ajoute à f l'os « nom » d'après sa silhouette de planche, posé de A (repère cle_a) à B (repère cle_b)."""
+    d = os_planche(nom)
+    rp = d["reperes"]
+    pose = Placement(rp[cle_a], rp[cle_b], A, B, normale=normale)
+    cartes = cartes_silhouette(d["contour"], forme=forme, k=k, plat=plat, zones=zones)
+    f.ajouter(silhouette(cartes, pose, decal=decal, epaisseur=epaisseur, decal_b=decal_b), kj, partie)
+    return pose
+
+
 def humerus():
-    """Humérus (« boîte à moelle ») : tête en arrière, gros tubercule (pointe de l'épaule), corps tordu,
-    tubérosité deltoïdienne, condyle en bobine et fosse de l'olécrane."""
+    """Humérus (« boîte à moelle ») d'après la planche 3 : tête en arrière, gros tubercule (la pointe de
+    l'épaule), tubérosité deltoïdienne, condyle en bobine du coude et fosse de l'olécrane."""
     f = Forme()
-    U = n_(DOS_PAL - GLENE)
-    tete = GLENE - U * 0.03 + p3(0.006, 0.0, 0.0)
-    axe = courbe([p3(-0.765, 0.955, 0.252), p3(-0.725, 0.88, 0.248), p3(-0.655, 0.8, 0.24), p3(-0.592, 0.728, 0.236)], n=12)
-    sec = [(0.042, 0.046), (0.034, 0.038), (0.026, 0.028), (0.022, 0.024), (0.021, 0.022), (0.021, 0.023), (0.022, 0.025),
-           (0.024, 0.028), (0.026, 0.032), (0.028, 0.036), (0.029, 0.04), (0.028, 0.04)]
-    os_long(f, axe, sec, haut=(1, 0, 0), k=0.01)
-    f.ajouter(ell(tete, (0.036, 0.034, 0.034)), 0.012)                                         # tête articulaire
-    f.ajouter(ell(p3(-0.792, 0.972, 0.27), (0.026, 0.044, 0.024), rot=(0, 0, -25)), 0.014)   # gros tubercule, crânial
-    f.ajouter(ell(p3(-0.772, 0.99, 0.28), (0.022, 0.03, 0.02)), 0.012)                        # gros tubercule, caudal
-    f.ajouter(ell(p3(-0.776, 0.955, 0.222), (0.02, 0.03, 0.016)), 0.012)                      # petit tubercule (dedans)
-    f.creuser(cap(p3(-0.812, 0.99, 0.247), p3(-0.79, 0.93, 0.247), 0.008), 0.004)             # gouttière du biceps
-    f.ajouter(ell(p3(-0.712, 0.862, 0.264), (0.026, 0.012, 0.008), axes=((0.62, -0.78, 0), (0.78, 0.62, 0), Z)), 0.012)  # tubérosité deltoïdienne
+    pose = os_planche3d(f, "humerus", "tete", "coude", HUM_TETE, COUDE, k=0.92, kj=0.008,
+                        zones=[([(1190, 1060), (1270, 1060), (1270, 1130), (1190, 1130)], 0.82)])
+    U, V, W = pose.U, pose.V, pose.W
+    f.ajouter(ell(HUM_TETE + U * 0.014 - V * 0.004 - W * 0.006, (0.036, 0.035, 0.032), axes=(U, V, W)), 0.02)   # tête articulaire
+    f.ajouter(ell(HUM_TETE + U * 0.012 + V * 0.045 - W * 0.022, (0.022, 0.018, 0.016), axes=(U, V, W)), 0.012)  # petit tubercule (dedans)
     c = COUDE
-    f.ajouter(ell(c + p3(0, 0, -0.022), (0.03, 0.03, 0.02)), 0.01)
-    f.ajouter(ell(c + p3(0.002, 0.002, 0.019), (0.026, 0.027, 0.017)), 0.01)
-    f.ajouter(cap(c + p3(0, 0, -0.03), c + p3(0, 0, 0.03), 0.021), 0.008)
-    for sz, r in ((1, 0.014), (-1, 0.017)):                                                     # épicondyles
-        f.ajouter(ell(c + p3(0.02, 0.022, sz * 0.03), (0.016, 0.024, r * 0.7)), 0.01)
-    f.creuser(ell(c + p3(0.03, 0.034, 0.0), (0.016, 0.022, 0.014)), 0.005)                      # fosse de l'olécrane
+    f.ajouter(cap(c - W * 0.034, c + W * 0.03, 0.022), 0.01)                                        # condyle en bobine
+    f.ajouter(ell(c - W * 0.026, (0.027, 0.03, 0.016), axes=(U, V, W)), 0.008)                      # lèvre interne (plus grosse)
+    for sw, r in ((1, 0.013), (-1, 0.016)):                                                         # épicondyles
+        f.ajouter(ell(c - U * 0.02 - V * 0.022 + W * sw * 0.03, (0.022, 0.016, r * 0.8), axes=(U, V, W)), 0.01)
+    f.creuser(ell(c - U * 0.03 - V * 0.03, (0.022, 0.016, 0.015), axes=(U, V, W)), 0.005)            # fosse de l'olécrane
+    f.creuser(cap(HUM_TETE + V * 0.06 + U * 0.01, HUM_TETE + V * 0.05 + U * 0.07, 0.007), 0.004)     # gouttière du biceps
     return f
 
 
 def radius():
-    """Radius (plat et large), cubitus soudé derrière avec l'olécrane (la pointe du coude), et les os du carpe."""
+    """Radius (large, aplati d'avant en arrière) et cubitus soudé derrière, qui monte en olécrane (la pointe
+    du coude), d'après la planche 3 ; os du carpe (deux rangées) et os accessoire."""
     f = Forme()
-    z = 0.214
-    axe = courbe([p3(-0.58, 0.674, z), p3(-0.592, 0.58, z - 0.002), p3(-0.597, 0.5, z - 0.005), p3(-0.6, 0.432, z - 0.008)], n=10)
-    sec = [(0.024, 0.042), (0.019, 0.033), (0.016, 0.027), (0.015, 0.025), (0.015, 0.025), (0.0155, 0.026), (0.016, 0.028),
-           (0.018, 0.032), (0.02, 0.037), (0.021, 0.04)]
-    os_long(f, axe, sec, haut=(1, 0, 0), k=0.01)
-    ul = courbe([p3(-0.494, 0.792, z + 0.008), p3(-0.522, 0.742, z + 0.01), p3(-0.55, 0.69, z + 0.012),
-                 p3(-0.566, 0.635, z + 0.014), p3(-0.578, 0.56, z + 0.016), p3(-0.588, 0.48, z + 0.018),
-                 p3(-0.593, 0.425, z + 0.02)], n=14)
-    f.ajouter(loft(ul, [0.024, 0.03, 0.024, 0.013, 0.008, 0.006, 0.0085], [0.013, 0.013, 0.012, 0.009, 0.0065, 0.0055, 0.0065],
-                   haut=(1, 0, 0), arrondi=0.003), 0.012)
-    f.ajouter(ell(p3(-0.496, 0.796, z + 0.008), (0.017, 0.012, 0.016)), 0.008)                 # bout de la pointe du coude
-    f.creuser(ell(COUDE + p3(0.002, 0.002, -0.02), (0.031, 0.03, 0.05)), 0.004)                 # échancrure pour le condyle
-    for j, (y, h) in enumerate(((0.407, 0.0115), (0.381, 0.0105))):                            # carpe
-        zs = (z - 0.026, z, z + 0.024) if j == 0 else (z - 0.016, z + 0.016)
-        for zz in zs:
-            f.ajouter(boite(p3(-0.6 - 0.002 * j, y, zz), (0.019, h, 0.0125 if j == 0 else 0.016), arrondi=0.006), 0.002)
-    f.ajouter(ell(p3(-0.57, 0.405, z + 0.022), (0.016, 0.013, 0.008), rot=(0, 0, 20)), 0.004)   # os accessoire
+    pose = os_planche3d(f, "radius", "coude", "carpe", COUDE, CARPE, k=1.45, kj=0.01,
+                        zones=[([(1480, 1220), (1620, 1220), (1620, 1360), (1480, 1360)], 0.42),     # olécrane : lame
+                               ([(1438, 1380), (1470, 1380), (1470, 1700), (1438, 1700)], 0.7)])     # cubitus fin
+    # l'échancrure où tourne le condyle de l'humérus est déjà dans la silhouette de la planche
+    os_planche3d(f, "carpe_avant", "haut", "bas", CARPE, CANON_AV_HAUT, k=1.5, kj=0.004)
+    return f
+
+
+def canon_avant():
+    """Métacarpe (canon : 2 os soudés, gouttière sur le devant) d'après la planche 3, et les deux doigts."""
+    f = Forme()
+    pose = os_planche3d(f, "canon_avant", "haut", "boulet", CANON_AV_HAUT, BOULET_AV, k=1.3, kj=0.006)
+    U, V, W = pose.U, pose.V, pose.W
+    f.creuser(cap(CANON_AV_HAUT - U * 0.03 - V * 0.026, BOULET_AV + U * 0.03 - V * 0.021, 0.0035), 0.002)  # gouttière dorsale
+    for sw in (-1, 1):                                                                              # deux condyles
+        f.ajouter(ell(BOULET_AV + U * 0.006 + W * sw * 0.017, (0.017, 0.0165, 0.0135), axes=(U, V, W)), 0.003)
+    f.creuser(cap(BOULET_AV + U * 0.03 + V * 0.03, BOULET_AV + U * 0.03 - V * 0.03, 0.003), 0.002)  # entre les condyles
+    for dz in (-0.0235, 0.0235):
+        z = BOULET_AV[2] + dz
+        os_planche3d(f, "doigt_avant", "boulet", "pince", p3(BOULET_AV[0], BOULET_AV[1], z), p3(PINCE_AV[0], PINCE_AV[1], z),
+                     k=0.72, kj=0.003)
     return f
 
 
@@ -438,229 +695,253 @@ def doigts(f, boulet, sens=-1, z0=0.2):
         f.ajouter(ell(p3(x0 - sens * 0.034, y0 - 0.03, z0 + dz * 1.2), (0.007, 0.009, 0.006)), 0.002)
 
 
-def canon_avant():
-    """Métacarpe (canon : 2 os soudés, gouttière sur le devant) et doigts de l'avant."""
-    f = Forme()
-    z = 0.2
-    haut, bas = p3(-0.602, 0.362, z + 0.002), p3(-0.61, 0.15, z)
-    axe = courbe([haut, p3(-0.605, 0.3, z), p3(-0.608, 0.2, z), bas], n=8)
-    sec = [(0.019, 0.03), (0.016, 0.026), (0.0145, 0.023), (0.014, 0.022), (0.014, 0.022), (0.0145, 0.023), (0.016, 0.027),
-           (0.017, 0.031)]
-    os_long(f, axe, sec, haut=(1, 0, 0), arrondi=0.003)
-    f.creuser(cap(p3(-0.6265, 0.33, z), p3(-0.629, 0.18, z), 0.0035), 0.002)              # gouttière (2 os soudés)
-    for dz in (-0.017, 0.017):                                                            # deux condyles en bas
-        f.ajouter(ell(p3(-0.611, 0.14, z + dz), (0.017, 0.0165, 0.0135)), 0.003)
-    f.ajouter(ell(p3(-0.6, 0.33, z + 0.03), (0.005, 0.03, 0.004)), 0.003)                  # 5e métacarpien, vestige
-    doigts(f, BOULET_AV + p3(0, 0, 0), sens=-1, z0=z)
-    return f
-
-
 # ================================================================ membre arrière (côté gauche)
 POINTE_HANCHE = p3(0.47, 1.318, 0.258)   # tubérosité coxale (la « hanche »)
 SACREE = p3(0.552, 1.372, 0.052)         # tubérosité sacrée, près du sacrum
 ACETABULE = p3(0.8, 1.0, 0.19)           # cavité de la hanche (articulation)
 POINTE_FESSE = p3(1.04, 1.13, 0.112)     # tubérosité ischiatique
 GRASSET = p3(0.69, 0.692, 0.215)         # condyles du fémur (articulation du grasset)
-JARRET = p3(0.884, 0.418, 0.205)
+JARRET = p3(0.884, 0.418, 0.205)         # articulation du jarret (tibia / astragale)
 BOULET_AR = p3(0.866, 0.132, 0.2)
+TETE_FEMUR = ACETABULE + p3(0.0, -0.004, -0.006)                       # centre de la tête du fémur (dans le cotyle)
+PLATEAU_TIBIA = GRASSET + p3(0.008, -0.048, -0.003)                       # haut du tibia, sous les condyles du fémur
+CANON_AR_HAUT = p3(0.878, 0.355, 0.2)                                     # haut du métatarse, sous le tarse
+PINCE_AR = BOULET_AR + p3(-0.07, -0.118, 0.0)                             # bout de l'onglon, dans le sabot
+
+
+def _affine_xz(paires):
+    """Affine (2x3) pixels de planche vue de dessus -> (x, z) du modèle, au sens des moindres carrés."""
+    A = np.array([[px, py, 1.0] for (px, py), _ in paires])
+    Bx = np.array([xz[0] for _, xz in paires])
+    Bz = np.array([xz[1] for _, xz in paires])
+    return np.vstack([np.linalg.lstsq(A, Bx, rcond=None)[0], np.linalg.lstsq(A, Bz, rcond=None)[0]])
+
+
+def _affine_coxal():
+    rp = os_planche("coxal_dessus")["reperes"]
+    return _affine_xz([(rp["hanche"], (POINTE_HANCHE[0], POINTE_HANCHE[2] - 0.03)),
+                       (rp["acetabule"], (ACETABULE[0], ACETABULE[2] + 0.02)),
+                       (rp["fesse"], (POINTE_FESSE[0], POINTE_FESSE[2])), (rp["symphyse"], (0.92, 0.0)),
+                       (rp["sacree"], (SACREE[0], SACREE[2]))])
 
 
 def coxal():
-    """Os coxal : aile de l'ilium (pointe de la hanche à trois bosses, tubérosité sacrée, crête),
-    corps de l'ilium, cavité de la hanche, ischium et sa tubérosité (la pointe de la fesse),
-    pubis, symphyse ; le trou obturé est le vide laissé au milieu du plancher."""
+    """Os coxal gauche d'après le bassin vu de dessus (planche 13, fig. 62) et de profil (planche 3) :
+    aile de l'ilium (pointe de la hanche à trois bosses, tubérosité sacrée), col de l'ilium, cavité de la
+    hanche (cotyle), plancher du bassin (pubis et ischion) percé du trou obturé, symphyse, et la pointe de
+    la fesse (tubérosité ischiatique). Le contour vient de la vue de dessus ; la hauteur de chaque point
+    suit une surface lisse calée sur les repères de profil."""
     f = Forme()
-    col = p3(0.705, 1.11, 0.178)
-    U = POINTE_HANCHE - col
-    Ri = Repere(col, U, np.cross(U, SACREE - col), V_vers=(0, 0, -1))
-    uv = lambda p: (float((np.asarray(p) - Ri.O) @ Ri.U), float((np.asarray(p) - Ri.O) @ Ri.V))
-    aile = [uv(col + p3(0.03, -0.03, 0.02)), uv(POINTE_HANCHE + p3(0.03, -0.035, 0.0)), uv(POINTE_HANCHE + p3(-0.01, 0.0, 0.0)),
-            uv((POINTE_HANCHE + SACREE) / 2 + p3(0.035, 0.0, 0.0)), uv(SACREE + p3(0.0, 0.0, 0.0)),
-            uv(SACREE + p3(0.06, -0.06, 0.0)), uv(col + p3(0.04, 0.02, -0.06))]
-    f.ajouter(plaque(Ri, aile, 0.0075, arrondi=0.004), 0.006)
-    for chemin, r in (([POINTE_HANCHE, (POINTE_HANCHE + SACREE) / 2 + p3(0.03, 0.022, 0.0), SACREE], (0.016, 0.011, 0.013)),
-                      ([POINTE_HANCHE, POINTE_HANCHE + p3(0.11, -0.09, -0.04), col + p3(0.015, -0.022, 0.012)], (0.02, 0.014, 0.018)),
-                      ([SACREE, SACREE + p3(0.07, -0.07, 0.04), col + p3(0.02, 0.02, -0.02)], (0.012, 0.011, 0.016))):
-        f.ajouter(loft(courbe(chemin, n=10), list(r), list(r), haut=Y, arrondi=0.003), 0.012)
-    for d in (p3(0, 0.012, 0.0), p3(0.022, -0.026, 0.01), p3(-0.016, -0.022, -0.004)):     # 3 bosses de la hanche
-        f.ajouter(ell(POINTE_HANCHE + d, (0.022, 0.019, 0.02)), 0.012)
-    f.ajouter(ell(SACREE, (0.019, 0.017, 0.014)), 0.01)
-    f.ajouter(loft(courbe([col + p3(-0.04, 0.05, 0.0), col, ACETABULE + p3(-0.024, 0.024, -0.008)], n=8),
-                   [0.022, 0.022, 0.026], [0.017, 0.019, 0.024], haut=Y, arrondi=0.005), 0.014)
-    f.ajouter(ell(ACETABULE, (0.045, 0.044, 0.038)), 0.012)
-    f.creuser(ell(ACETABULE + p3(0.0, -0.012, 0.028), (0.033, 0.032, 0.025)), 0.005)          # cavité de la hanche
-    sym_av, sym_mi, sym_ar = p3(0.848, 0.942, 0.012), p3(0.92, 0.952, 0.012), p3(0.99, 0.972, 0.012)
-    anneau = [ACETABULE + p3(0.012, -0.034, -0.012), p3(0.832, 0.95, 0.11), sym_av + p3(0.004, 0.0, 0.016),
-              sym_mi + p3(0, 0, 0.018), sym_ar + p3(0.0, 0.004, 0.016), p3(1.018, 1.02, 0.058),
-              POINTE_FESSE + p3(-0.01, -0.03, -0.004), p3(0.97, 1.07, 0.148), p3(0.88, 1.02, 0.176),
-              ACETABULE + p3(0.03, -0.01, -0.004)]
-    rayons = np.array([0.024, 0.019, 0.021, 0.024, 0.024, 0.02, 0.022, 0.021, 0.023, 0.025])
-    c = courbe(anneau, n=40)
-    ra = np.interp(np.linspace(0, 1, 40), np.linspace(0, 1, 10), rayons)
-    f.ajouter(loft(c, ra, ra * 0.75, haut=Y, arrondi=0.004), 0.012)
-    f.ajouter(loft([sym_av + p3(0.0, 0.0, 0.03), sym_mi + p3(0, 0.002, 0.034), sym_ar + p3(0.0, 0.006, 0.03)],
-                   [0.011, 0.012, 0.011], [0.036, 0.04, 0.036], haut=Y, arrondi=0.004), 0.012)
-    for d, r in ((p3(0.0, 0.03, -0.004), 0.018), (p3(0.014, 0.0, 0.02), 0.016), (p3(-0.008, -0.04, 0.004), 0.016)):
-        f.ajouter(ell(POINTE_FESSE + d, (r, r * 1.1, r * 0.9)), 0.012)
-    f.ajouter(loft(courbe([ACETABULE + p3(0.034, 0.006, -0.004), p3(0.93, 1.07, 0.15), POINTE_FESSE + p3(-0.01, 0.0, 0.0)], n=8),
-                   [0.022, 0.018, 0.02], [0.016, 0.014, 0.017], haut=Y, arrondi=0.004), 0.014)
+    d = os_planche("coxal_dessus")
+    M = _affine_coxal()
+    # hauteur (y) de la surface de l'os : (x, z, y)
+    appuis_y = [
+        (0.47, 0.258, 1.312), (0.552, 0.052, 1.362), (0.5, 0.16, 1.322), (0.48, 0.09, 1.34), (0.56, 0.22, 1.265),
+        (0.62, 0.2, 1.2), (0.64, 0.12, 1.2), (0.7, 0.19, 1.11), (0.72, 0.1, 1.09), (0.8, 0.2, 1.0), (0.8, 0.06, 0.985),
+        (0.85, 0.0, 0.955), (0.92, 0.0, 0.952), (0.99, 0.0, 0.975), (0.9, 0.1, 0.975), (0.95, 0.16, 1.02),
+        (1.04, 0.112, 1.12), (1.0, 0.04, 1.02), (1.06, 0.14, 1.14), (0.6, 0.0, 1.3),
+    ]
+    # demi-épaisseur (normale) : aile et plancher minces, col de l'ilium et pourtour du cotyle épais
+    appuis_e = [
+        (0.47, 0.258, 0.011), (0.552, 0.052, 0.014), (0.5, 0.16, 0.008), (0.56, 0.22, 0.01), (0.62, 0.19, 0.016),
+        (0.68, 0.18, 0.019), (0.72, 0.12, 0.012), (0.8, 0.2, 0.026), (0.8, 0.06, 0.012), (0.88, 0.02, 0.01),
+        (0.95, 0.1, 0.008), (0.92, 0.0, 0.012), (1.04, 0.112, 0.02), (0.99, 0.15, 0.01), (1.0, 0.04, 0.009),
+        (0.6, 0.0, 0.01),
+    ]
+    f.ajouter(relief(d["contour"], d["trous"], M, appuis_y, appuis_e), 0.004)
+    # pointe de la hanche à trois bosses, tubérosité sacrée, pointe de la fesse (trois bosses)
+    for dd in (p3(0, 0.01, 0.0), p3(0.024, -0.024, 0.008), p3(-0.016, -0.02, -0.004)):    # juste sous la peau
+        f.ajouter(ell(POINTE_HANCHE + p3(0.0, -0.006, -0.016) + dd, (0.02, 0.017, 0.018)), 0.012)
+    f.ajouter(ell(SACREE + p3(0.0, 0.004, 0.0), (0.02, 0.016, 0.014)), 0.01)
+    for dd, r in ((p3(0.0, 0.026, -0.004), 0.016), (p3(0.014, 0.0, 0.018), 0.015), (p3(-0.008, -0.034, 0.004), 0.014)):
+        f.ajouter(ell(POINTE_FESSE + dd, (r, r * 1.1, r * 0.9)), 0.012)
+    # cavité de la hanche (cotyle) : coupe épaisse autour de la tête du fémur, ouverte en dehors et en bas,
+    # échancrure en bas
+    tf = TETE_FEMUR
+    f.ajouter(ell(tf + p3(0.0, 0.012, -0.014), (0.048, 0.046, 0.04)), 0.014)
+    f.creuser(ell(tf, (0.037, 0.037, 0.036)), 0.004)
+    f.creuser(ell(tf + p3(0.0, -0.032, 0.036), (0.036, 0.034, 0.032)), 0.006)
+    f.creuser(ell(tf + p3(0.012, -0.044, 0.006), (0.012, 0.012, 0.03)), 0.003)
+    # symphyse (soudure des deux moitiés) un peu épaissie en dessous
+    f.ajouter(loft([p3(0.86, 0.948, 0.01), p3(0.93, 0.946, 0.012), p3(0.985, 0.968, 0.01)], [0.012, 0.013, 0.012],
+                   [0.012, 0.014, 0.012], haut=Y, arrondi=0.004), 0.01)
+    # articulation sacro-iliaque : l'os du bassin s'appuie sur le sacrum (relevé sur les planches) sans le traverser
+    sac = sacrum()
+    lo, hi = sac.boite(0.006)
+    f.creuser(Prim(lambda P: sac.distance(P) - 0.002, lo, hi), 0.003)
     return f
 
 
 def femur():
-    """Fémur : tête dans la cavité de la hanche, grand trochanter, corps cylindrique,
+    """Fémur d'après la planche 3 : tête dans la cavité de la hanche, grand trochanter, corps épais,
     trochlée (gorge de la rotule) devant, deux condyles derrière."""
     f = Forme()
     tete = ACETABULE + p3(0.0, -0.004, 0.006)
-    f.ajouter(ell(tete, (0.034, 0.034, 0.033)), 0.005)
-    f.creuser(ell(tete + p3(0.0, -0.01, -0.032), (0.008, 0.008, 0.006)), 0.002)                   # fossette du ligament rond
-    f.ajouter(loft([tete + p3(0.006, -0.008, 0.012), p3(0.818, 0.972, 0.232)], [0.022, 0.026], [0.02, 0.026], haut=Y,
-                   arrondi=0.004), 0.008)                                                           # col
-    f.ajouter(loft(courbe([p3(0.836, 1.048, 0.256), p3(0.848, 1.02, 0.262), p3(0.84, 0.98, 0.258)], n=5),
-                   [0.022, 0.032, 0.026], [0.02, 0.022, 0.02], haut=(1, 0, 0), arrondi=0.005), 0.012)  # grand trochanter
-    f.creuser(ell(p3(0.852, 1.0, 0.235), (0.012, 0.024, 0.012)), 0.004)                            # fosse trochantérique
-    axe = courbe([p3(0.824, 0.985, 0.238), p3(0.79, 0.9, 0.232), p3(0.752, 0.82, 0.224), p3(0.712, 0.735, 0.217)], n=10)
-    sec = [(0.036, 0.034), (0.03, 0.03), (0.025, 0.026), (0.023, 0.024), (0.0225, 0.0235), (0.023, 0.024), (0.024, 0.026),
-           (0.027, 0.03), (0.031, 0.034), (0.034, 0.038)]
-    os_long(f, axe, sec, haut=(1, 0, 0), k=0.012)
-    f.ajouter(ell(p3(0.82, 0.93, 0.212), (0.014, 0.022, 0.01)), 0.008)                             # petit trochanter (dedans)
-    # bas : trochlée en avant (lèvre interne plus grosse), condyles en arrière, fosse entre les deux
-    f.ajouter(ell(p3(0.69, 0.712, 0.215), (0.038, 0.034, 0.036)), 0.016)                           # bloc du bas
-    for dz, r in ((-0.022, 0.017), (0.019, 0.014)):
-        f.ajouter(ell(p3(0.668, 0.735, 0.215 + dz), (r, 0.04, r * 0.75), rot=(0, 0, -20)), 0.01)
-        f.ajouter(ell(p3(0.703, 0.695, 0.215 + dz * 1.1), (0.032, 0.032, 0.0185)), 0.01)
-    f.creuser(ell(p3(0.708, 0.682, 0.215), (0.03, 0.02, 0.009)), 0.003)                            # fosse intercondylaire
-    f.creuser(ell(p3(0.73, 0.77, 0.232), (0.01, 0.018, 0.008)), 0.003)                             # fosse supracondylaire
+    pose = os_planche3d(f, "femur", "tete", "grasset", tete, GRASSET, k=0.95, kj=0.008, decal=0.03, decal_b=0.0)
+    U, V, W = pose.U, pose.V, pose.W
+    f.ajouter(ell(TETE_FEMUR, (0.034, 0.034, 0.033), axes=(U, V, W)), 0.016)                         # tête (vers le dedans)
+    f.creuser(ell(TETE_FEMUR - W * 0.032 + U * 0.004, (0.008, 0.008, 0.006), axes=(U, V, W)), 0.002)  # fossette du ligament rond
+    f.ajouter(ell(tete + U * 0.1 - V * 0.0 - W * 0.022, (0.022, 0.012, 0.012), axes=(U, V, W)), 0.01)   # petit trochanter (dedans)
+    for sw, r in ((-1, 0.019), (1, 0.016)):                                                         # deux condyles, bien séparés
+        f.ajouter(ell(GRASSET + V * -0.012 + W * sw * 0.024, (0.033, 0.032, r), axes=(U, V, W)), 0.008)
+    f.creuser(ell(GRASSET - V * 0.03 + U * 0.005, (0.03, 0.02, 0.009), axes=(U, V, W)), 0.003)      # fosse intercondylaire
+    for sw, r in ((-1, 0.012), (1, 0.01)):                                                          # lèvres de la trochlée
+        f.ajouter(ell(GRASSET + V * 0.036 - U * 0.02 + W * sw * 0.017, (0.04, 0.012, r), axes=(U, V, W)), 0.008)
     return f
 
 
 def rotule():
+    """Rotule d'après la planche 3, posée devant la trochlée du fémur."""
     f = Forme()
-    c = p3(0.636, 0.735, 0.215)
-    f.ajouter(ell(c, (0.02, 0.036, 0.024), rot=(0, 0, -22)), 0.004)
-    f.ajouter(ell(c + p3(-0.004, 0.022, 0.0), (0.017, 0.012, 0.02)), 0.006)                         # base, en haut
-    f.creuser(ell(c + p3(0.028, 0.0, 0.0), (0.012, 0.03, 0.03), rot=(0, 0, -22)), 0.003)           # face articulaire
+    rp = os_planche("femur")["reperes"]
+    tete = ACETABULE + p3(0.0, -0.004, 0.006)
+    d = os_planche("rotule")
+    pose = Placement(rp["tete"], rp["grasset"], tete, GRASSET)
+    f.ajouter(silhouette(cartes_silhouette(d["contour"], forme="rond", k=1.15), pose, decal=0.004), 0.004)
+    f.ops[-1] = ("+", _decale(f.ops[-1][1], -pose.V * 0.016), f.ops[-1][2], f.ops[-1][3])
     return f
 
 
 def tibia():
-    """Tibia : plateau avec deux condyles, tubérosité et crête devant, malléoles en bas ;
-    péroné réduit ; tarse avec l'astragale et le calcanéum (pointe du jarret)."""
+    """Tibia d'après la planche 3 : plateau à deux condyles, tubérosité et crête devant, malléoles en bas ;
+    péroné réduit ; tarse avec l'astragale et le calcanéum (la pointe du jarret)."""
     f = Forme()
-    z = 0.21
-    axe = courbe([p3(0.688, 0.652, z), p3(0.75, 0.57, z), p3(0.82, 0.495, z - 0.002), p3(0.872, 0.45, z - 0.004)], n=10)
-    sec = [(0.034, 0.046), (0.028, 0.034), (0.022, 0.025), (0.019, 0.021), (0.018, 0.02), (0.018, 0.02), (0.018, 0.021),
-           (0.02, 0.024), (0.023, 0.03), (0.024, 0.034)]
-    os_long(f, axe, sec, haut=(-0.75, -0.66, 0), k=0.01)
-    for dz in (-0.022, 0.022):
-        f.ajouter(ell(p3(0.692, 0.662, z + dz), (0.027, 0.012, 0.02)), 0.008)
-    f.ajouter(ell(p3(0.662, 0.645, z), (0.014, 0.022, 0.016)), 0.01)                               # tubérosité tibiale
-    f.ajouter(loft([p3(0.664, 0.64, z), p3(0.693, 0.6, z + 0.001), p3(0.728, 0.552, z)], [0.013, 0.01, 0.005],
-                   [0.008, 0.007, 0.005], haut=(0, 0, 1), arrondi=0.002), 0.014)                   # crête tibiale
-    f.ajouter(ell(p3(0.705, 0.648, z + 0.044), (0.01, 0.014, 0.008)), 0.008)                       # tête du péroné (soudée)
-    f.ajouter(ell(p3(0.884, 0.432, z + 0.03), (0.012, 0.015, 0.008)), 0.006)                       # os malléolaire (dehors)
-    f.ajouter(ell(p3(0.878, 0.436, z - 0.03), (0.013, 0.017, 0.008)), 0.006)                       # malléole interne
-    f.ajouter(ell(p3(0.884, 0.41, z), (0.022, 0.024, 0.022)), 0.004)
-    for dz in (-0.011, 0.011):
-        f.ajouter(cap(p3(0.878, 0.41, z + dz), p3(0.89, 0.41, z + dz), 0.019), 0.004)
-    f.ajouter(loft(courbe([p3(0.882, 0.385, z + 0.02), p3(0.915, 0.43, z + 0.022), p3(0.952, 0.48, z + 0.02)], n=6),
-                   [0.017, 0.014, 0.016], [0.012, 0.011, 0.013], haut=(1, 0, 0), arrondi=0.004), 0.01)   # calcanéum
-    f.ajouter(ell(p3(0.962, 0.492, z + 0.019), (0.017, 0.015, 0.017)), 0.008)                         # pointe du jarret
-    f.ajouter(boite(p3(0.88, 0.383, z), (0.021, 0.0105, 0.026), arrondi=0.005), 0.004)                # os central et 4e tarsien
+    pose = os_planche3d(f, "tibia", "plateau", "jarret", PLATEAU_TIBIA, JARRET, k=1.05, kj=0.008,
+                        zones=[([(2840, 1190), (2960, 1190), (2960, 1260), (2840, 1260)], 1.3)])    # plateau large
+    U, V, W = pose.U, pose.V, pose.W
+    for sw in (-1, 1):                                                                              # deux condyles du plateau
+        f.ajouter(ell(PLATEAU_TIBIA - U * 0.004 + W * sw * 0.024, (0.012, 0.03, 0.022), axes=(U, V, W)), 0.008)
+    f.ajouter(ell(PLATEAU_TIBIA + U * 0.012 + W * 0.046, (0.012, 0.01, 0.008), axes=(U, V, W)), 0.008)   # tête du péroné (soudée)
+    f.ajouter(ell(JARRET - U * 0.006 + W * 0.03, (0.016, 0.012, 0.008), axes=(U, V, W)), 0.006)       # os malléolaire (dehors)
+    f.ajouter(ell(JARRET - U * 0.008 - W * 0.03, (0.018, 0.013, 0.008), axes=(U, V, W)), 0.006)       # malléole interne
+    os_planche3d(f, "tarse", "haut", "bas", JARRET, CANON_AR_HAUT, k=1.35, kj=0.004,
+                 zones=[([(3135, 1490), (3215, 1490), (3215, 1590), (3135, 1590)], 0.6)])           # calcanéum : lame
     return f
 
 
 def canon_arriere():
-    """Métatarse (canon arrière, plus long et plus carré que l'avant) et doigts de l'arrière."""
+    """Métatarse (canon arrière, plus long et plus carré que l'avant) d'après la planche 3, et les doigts."""
     f = Forme()
-    z = 0.2
-    haut, bas = p3(0.878, 0.37, z), p3(0.866, 0.148, z)
-    axe = courbe([haut, p3(0.875, 0.3, z), p3(0.87, 0.2, z), bas], n=8)
-    sec = [(0.019, 0.023), (0.0165, 0.02), (0.0155, 0.018), (0.015, 0.018), (0.015, 0.018), (0.0155, 0.019), (0.016, 0.024),
-           (0.017, 0.029)]
-    os_long(f, axe, sec, haut=(1, 0, 0), arrondi=0.003)
-    f.creuser(cap(p3(0.859, 0.35, z), p3(0.851, 0.17, z), 0.004), 0.002)                         # gouttière, profonde
-    for dz in (-0.017, 0.017):
-        f.ajouter(ell(p3(0.866, 0.138, z + dz), (0.017, 0.0165, 0.0135)), 0.003)
-    doigts(f, BOULET_AR, sens=-1, z0=z)
+    pose = os_planche3d(f, "canon_arriere", "haut", "boulet", CANON_AR_HAUT, BOULET_AR, k=1.15, kj=0.006)
+    U, V, W = pose.U, pose.V, pose.W
+    f.creuser(cap(CANON_AR_HAUT + U * 0.03 + V * 0.022, BOULET_AR - U * 0.035 + V * 0.018, 0.004), 0.002)  # gouttière, profonde
+    for sw in (-1, 1):
+        f.ajouter(ell(BOULET_AR + U * 0.006 + W * sw * 0.017, (0.017, 0.0165, 0.0135), axes=(U, V, W)), 0.003)
+    f.creuser(cap(BOULET_AR + U * 0.03 + V * 0.03, BOULET_AR + U * 0.03 - V * 0.03, 0.003), 0.002)
+    for dz in (-0.0235, 0.0235):
+        z = BOULET_AR[2] + dz
+        os_planche3d(f, "doigt_arriere", "boulet", "pince", p3(BOULET_AR[0], BOULET_AR[1], z), p3(PINCE_AR[0], PINCE_AR[1], z),
+                     k=0.72, kj=0.003)
     return f
 
 
 # ================================================================ tête
+def _similitude(paires):
+    """Similitude 2D (échelle, rotation, translation) planche -> plan (x, y) du modèle, au sens des moindres
+    carrés ; la planche a son y vers le bas."""
+    P = np.array([[p[0], -p[1]] for p, _ in paires], float)
+    Q = np.array([q for _, q in paires], float)
+    mp, mq = P.mean(0), Q.mean(0)
+    A, B = P - mp, Q - mq
+    U_, S_, Vt = np.linalg.svd(B.T @ A)
+    R = U_ @ Vt
+    if np.linalg.det(R) < 0:
+        R = U_ @ np.diag([1, -1]) @ Vt
+    s = S_.sum() / (A ** 2).sum()
+    return lambda p: mq + s * R @ (np.array([p[0], -p[1]], float) - mp)
+
+
+def _pose_tete():
+    rp = os_planche("crane")["reperes"]
+    # calage dans la tête du modèle (recherché pour que tout l'os reste sous la peau) : bout de l'os incisif
+    # sous le mufle, orbite sous l'œil, chignon entre les cornes ; crâne de 56 cm
+    vers = _similitude([(rp["incisif"], (-1.575, 0.989)), (rp["orbite"], (-1.346, 1.274)), (rp["nuque"], (-1.188, 1.397))])
+    A = p3(*vers(rp["incisif"]))
+    B = p3(*vers(rp["nuque"]))
+    return Placement(rp["incisif"], rp["nuque"], A, B), vers
+
+
+# demi-largeur du crâne (m) le long de l'axe bout du nez -> nuque (0 -> 1) : museau 4,5 cm, tubérosités faciales
+# 7 cm, orbites 10,5 cm, rétrécissement derrière les orbites, nuque et base des cornes 9 cm
+KZ = 0.9                # le crâne est à 90 % d'un crâne de 62 cm : largeurs et écarts réduits d'autant
+LARGEUR_CRANE = [(u, KZ * w) for u, w in [(0.0, 0.04), (0.1, 0.044), (0.2, 0.05), (0.3, 0.057), (0.4, 0.066), (0.5, 0.072),
+                                          (0.6, 0.082), (0.68, 0.096), (0.76, 0.106), (0.84, 0.09), (0.92, 0.088), (1.0, 0.085),
+                                          (1.2, 0.07)]]
+
+
 def crane():
-    """Crâne de bovin : front large et plat (le plus grand os de la tête), chignon entre les cornes,
-    chevilles osseuses des cornes, orbites fermées sur les côtés, arcades zygomatiques, nuque plate,
-    face longue à section carrée, tubérosité faciale, os incisif sans dents ; mâchoire inférieure
-    (corps, angle arrondi, branche montante, condyle et apophyse coronoïde) ; dents."""
+    """Crâne de bovin d'après la planche 9 (fig. 31, Ellenberger-Baum) : profil exact (os incisif sans dents,
+    os nasal, front large et plat, chignon entre les cornes, nuque), largeur d'un crâne réel ; orbites
+    fermées avec leur rebord, fosses temporales et arcades zygomatiques, ouverture du nez, trou
+    sous-orbitaire, condyles de l'occipital et trou occipital, chevilles osseuses des cornes, molaires ;
+    mâchoire inférieure (corps, barre, branche montante, angle, apophyse coronoïde, condyle) et incisives."""
     f = Forme()
-    O = p3(-1.214, 1.438)                         # chignon (haut de la nuque)
-    S = n_(p3(-1.598, 0.99) - O)                  # le long du chanfrein, vers le bout du nez
-    D = n_(np.cross(Z, S))                        # vers l'arrière et le bas : sous la tête
-    pt = lambda s, d, z=0.0: O + S * s + D * d + Z * z
-    ax = (S, D, Z)
-    # front : grande plaque épaisse, la plus large aux orbites
-    fs = [0.0, 0.03, 0.08, 0.13, 0.2, 0.26, 0.33]
-    f.ajouter(loft([pt(s_, 0.02) for s_ in fs], [0.02, 0.022, 0.022, 0.021, 0.02, 0.019, 0.016],
-                   [0.072, 0.092, 0.084, 0.09, 0.1, 0.088, 0.068], haut=D, arrondi=0.008, carre=2.6), 0.012)
-    f.ajouter(cap(pt(0.012, 0.012, -0.082), pt(0.012, 0.012, 0.082), 0.021), 0.014)          # chignon
-    # boîte crânienne sous le front, nuque plate derrière, condyles de l'occipital en bas
-    f.ajouter(ell(pt(0.075, 0.085), (0.075, 0.068, 0.072), axes=ax), 0.02)
-    f.ajouter(loft([pt(0.004, 0.01), pt(0.0, 0.08), pt(0.012, 0.15)], [0.016, 0.017, 0.016], [0.08, 0.075, 0.055],
-                   haut=S, arrondi=0.006, carre=3.0), 0.016)
+    d = os_planche("crane")
+    rp = d["reperes"]
+    pose, vers = _pose_tete()
+    U, V, W = pose.U, pose.V, pose.W
+    L = pose.longueur
+    larg = np.array(LARGEUR_CRANE)
+    f.ajouter(volume_profil(d["contour"], pose, larg, p=2.6, haut_etroit=0.7), 0.006)
+    P_ = lambda cle, z=0.0: p3(*vers(rp[cle]), z)
+    demi = lambda u: float(np.interp(u, larg[:, 0], larg[:, 1]))
+    u_de = lambda P: float((np.asarray(P) - pose.A) @ U) / L
     for sz in (1, -1):
-        f.ajouter(ell(pt(0.018, 0.168, 0.031 * sz), (0.016, 0.022, 0.014), axes=ax), 0.006)  # condyles
-        f.ajouter(ell(pt(0.035, 0.175, 0.062 * sz), (0.01, 0.026, 0.009), axes=ax), 0.006)   # apophyses paracondylaires
-        f.ajouter(ell(pt(0.075, 0.15, 0.05 * sz), (0.016, 0.014, 0.016), axes=ax), 0.008)     # bulles tympaniques
-    f.creuser(cylindre(pt(-0.03, 0.155), pt(0.06, 0.155), 0.016), 0.004)                        # trou occipital
-    # face : section carrée qui s'amincit jusqu'au bout du nez, palais en dessous
-    ss = [0.2, 0.26, 0.31, 0.37, 0.43, 0.49, 0.54, 0.585]
-    dc = [0.068, 0.068, 0.065, 0.058, 0.05, 0.042, 0.034, 0.028]
-    hd = [0.066, 0.068, 0.066, 0.058, 0.048, 0.038, 0.029, 0.022]
-    lz = [0.082, 0.08, 0.077, 0.071, 0.063, 0.054, 0.046, 0.04]
-    f.ajouter(loft([pt(a, b) for a, b in zip(ss, dc)], hd, lz, haut=D, arrondi=0.008, carre=2.5), 0.016)
-    for sz in (1, -1):
-        # orbite : rebord osseux complet, creux de l'œil, masse qui la relie au front
-        oc = pt(0.205, 0.036, 0.108 * sz)
-        regard = n_(Z * sz * 0.9 - S * 0.25 + D * 0.1)
-        f.ajouter(ell(pt(0.2, 0.034, 0.085 * sz), (0.045, 0.04, 0.03), axes=ax), 0.014)
-        f.ajouter(ell(oc, (0.038, 0.036, 0.024), axes=ax), 0.012)
-        f.creuser(ell(oc + regard * 0.022, (0.031, 0.029, 0.032), axes=ax), 0.006)
-        # arcade zygomatique : du bas de l'orbite vers l'articulation de la mâchoire
-        f.ajouter(loft([pt(0.235, 0.072, 0.112 * sz), pt(0.18, 0.1, 0.108 * sz), pt(0.13, 0.128, 0.096 * sz)],
-                       [0.012, 0.009, 0.011], [0.007, 0.006, 0.008], haut=D, arrondi=0.003), 0.008)
-        f.creuser(ell(pt(0.135, 0.07, 0.092 * sz), (0.034, 0.03, 0.02), axes=ax), 0.008)       # fosse temporale
-        f.ajouter(ell(pt(0.31, 0.078, 0.075 * sz), (0.024, 0.014, 0.01), axes=ax), 0.01)       # tubérosité faciale
-        # chevilles osseuses des cornes (sous la corne), dirigées sur le côté puis vers le haut
-        corne = courbe([pt(0.015, 0.012, 0.075 * sz), p3(-1.206, 1.46, 0.165 * sz), p3(-1.2, 1.49, 0.232 * sz),
-                        p3(-1.222, 1.54, 0.28 * sz)], n=10)
-        f.ajouter(loft(corne, np.linspace(0.032, 0.009, 10), np.linspace(0.027, 0.008, 10), haut=Y, arrondi=0.004), 0.014)
-        # 6 dents du haut (3 prémolaires, 3 molaires), sous le maxillaire
+        # orbite : creux profond tourné en dehors (un peu en avant), rebord osseux saillant
+        o = P_("orbite")
+        wo = demi(u_de(o))
+        regard = n_(Z * sz * 0.92 - U * 0.3)
+        f.ajouter(tore(o + Z * sz * (wo - 0.014), regard, 0.031, 0.0075), 0.018)
+        f.creuser(ell(o + Z * sz * (wo + 0.002), (0.03, 0.028, 0.032), axes=(U, V, W)), 0.01)
+        # fosse temporale derrière l'orbite, arcade zygomatique par-dessus
+        t = P_("temporal")
+        f.creuser(ell(t + Z * sz * (demi(u_de(t)) + 0.006), (0.04, 0.03, 0.02), axes=(U, V, W)), 0.01)
+        arc = [p3(*vers(q), sz * (demi(u_de(p3(*vers(q)))) + 0.004)) for q in rp["arcade"]]
+        f.ajouter(loft(courbe(arc, n=10), [0.011, 0.009, 0.009, 0.011], [0.006, 0.005, 0.005, 0.006], haut=V, arrondi=0.003), 0.008)
+        # trou sous-orbitaire
+        so = P_("trou_sous_orbite")
+        f.creuser(ell(so + Z * sz * demi(u_de(so)), (0.008, 0.006, 0.01), axes=(U, V, W)), 0.002)
+        # cheville osseuse de la corne : sur le côté puis vers le haut, logée dans la corne
+        cb = P_("corne", sz * 0.075 * KZ)
+        corne = courbe([cb, cb + p3(0.006, 0.02, sz * 0.066), cb + p3(0.012, 0.05, sz * 0.13), cb + p3(-0.01, 0.1, sz * 0.18)], n=12)
+        f.ajouter(loft(corne, np.linspace(0.03, 0.008, 12), np.linspace(0.026, 0.007, 12), haut=Y, arrondi=0.004), 0.016)
+        # molaires du haut : 6 dents (3 prémolaires, 3 molaires) le long de la rangée
+        dents = [p3(*vers(q)) for q in rp["dents_haut"]]
         for j in range(6):
-            t = j / 5
-            f.ajouter(boite(pt(0.3 + 0.15 * t, 0.124 - 0.034 * t, (0.06 - 0.014 * t) * sz),
-                            (0.011, 0.014, 0.0095), arrondi=0.004, axes=ax), 0.003, "dent")
-    # ouverture du nez (entre os du nez et os incisifs) ; bout incisif sans dents (bourrelet)
-    f.creuser(ell(pt(0.575, 0.0), (0.06, 0.03, 0.032), axes=ax), 0.008)
-    f.ajouter(ell(pt(0.565, 0.045), (0.03, 0.013, 0.04), axes=ax), 0.01)
-    # mâchoire inférieure
+            t_ = j / 5
+            q = np.asarray(dents[0]) * (1 - t_) + np.asarray(dents[-1]) * t_
+            zq = sz * (demi(u_de(q)) - 0.016)
+            f.ajouter(boite(q + p3(0, 0.012, 0) + Z * zq, (0.011 + 0.002 * t_, 0.013, 0.0095), arrondi=0.004, axes=(U, V, W)),
+                      0.003, "dent")
+    # ouverture du nez (entre l'os nasal et l'os incisif), trou occipital
+    f.creuser(ell(P_("narine"), (0.05, 0.026, 0.046), axes=(U, V, W)), 0.01)
+    oc = P_("occipital")
+    f.creuser(cylindre(oc - U * 0.03 + V * 0.005, oc + U * 0.05 + V * 0.005, 0.015), 0.004)
+    for sz in (1, -1):    # condyles de l'occipital
+        f.ajouter(ell(oc + Z * sz * 0.026 - V * 0.004, (0.015, 0.02, 0.013), axes=(U, V, W)), 0.006)
+    # mâchoire inférieure : deux moitiés écartées vers l'arrière (symphyse devant)
+    dm = os_planche("mandibule")
+    rm = dm["reperes"]
     for sz in (1, -1):
-        Rm = Repere(p3(0, 0, 0.088 * sz), (1, 0, 0), (0, 0, 1), V_vers=(0, 1, 0))
-        branche = [(-1.198, 1.11), (-1.192, 1.2), (-1.2, 1.232), (-1.222, 1.226), (-1.245, 1.215), (-1.252, 1.3),
-                   (-1.268, 1.305), (-1.285, 1.22), (-1.305, 1.13), (-1.29, 1.075), (-1.25, 1.047), (-1.215, 1.058)]
-        f.ajouter(plaque(Rm, branche, 0.0085, arrondi=0.004), 0.008)
-        f.ajouter(ell(p3(-1.205, 1.236, 0.092 * sz), (0.013, 0.01, 0.019)), 0.005)          # condyle
-        corps = courbe([p3(-1.262, 1.08, 0.088 * sz), p3(-1.33, 1.072, 0.08 * sz), p3(-1.42, 1.025, 0.066 * sz),
-                        p3(-1.5, 0.983, 0.048 * sz), p3(-1.575, 0.952, 0.028 * sz), p3(-1.612, 0.952, 0.014 * sz)], n=12)
-        f.ajouter(loft(corps, [0.034, 0.034, 0.03, 0.019, 0.016, 0.014], [0.013, 0.013, 0.012, 0.01, 0.009, 0.01],
-                       haut=Y, arrondi=0.004), 0.01)
+        A = p3(*vers(rm["incisives"]), sz * 0.014 * KZ)
+        B = p3(*vers(rm["condyle"]), sz * 0.09 * KZ)
+        pm = Placement(rm["incisives"], rm["condyle"], A, B, normale=Z * sz)
+        cm = cartes_silhouette(dm["contour"], forme="plat", plat=0.0065 / pm.s,
+                               zones=[([(2020, 1540), (2780, 1540), (2780, 1700), (2020, 1700)], 1.9),     # corps épais
+                                      ([(2880, 980), (2960, 980), (2960, 1050), (2880, 1050)], 2.2)])     # condyle
+        f.ajouter(silhouette(cm, pm), 0.006)
+        dents = [p3(*vers(q)) for q in rm["dents_bas"]]
         for j in range(6):
-            t = j / 5
-            f.ajouter(boite(p3(-1.302 - 0.135 * t, 1.115 - 0.072 * t, (0.073 - 0.016 * t) * sz), (0.011, 0.012, 0.0085),
-                            arrondi=0.004), 0.003, "dent")
-    f.ajouter(ell(p3(-1.605, 0.948, 0.0), (0.016, 0.014, 0.022)), 0.008)                       # symphyse du menton
-    for j, a in enumerate(np.linspace(-1, 1, 8)):                                              # 8 incisives, en bas seulement
-        f.ajouter(ell(p3(-1.628 + 0.008 * abs(a), 0.968 + 0.006 * abs(a), 0.025 * a), (0.008, 0.014, 0.0045),
-                      rot=(0, 0, -35)), 0.002, "dent")
+            t_ = j / 5
+            q = np.asarray(dents[0]) * (1 - t_) + np.asarray(dents[-1]) * t_
+            zq = KZ * sz * (0.014 + (0.09 - 0.014) * float((q - A) @ pm.U) / pm.longueur) - sz * 0.002
+            f.ajouter(boite(p3(q[0], q[1], zq) - pm.V * 0.012, (0.011 + 0.002 * t_, 0.012, 0.0085), arrondi=0.004,
+                            axes=(pm.U, pm.V, pm.W)), 0.003, "dent")
+    # 8 incisives, en bas seulement (en haut : bourrelet sans dents)
+    ib = p3(*vers(rm["incisives"]))
+    for j, a in enumerate(np.linspace(-1, 1, 8)):
+        f.ajouter(ell(ib + p3(0.006 * abs(a), 0.012 + 0.004 * abs(a), 0.022 * a), (0.0075, 0.014, 0.0042), rot=(0, 0, -35)),
+                  0.002, "dent")
     return f
 
 

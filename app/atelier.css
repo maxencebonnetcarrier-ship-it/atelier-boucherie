@@ -1,0 +1,116 @@
+/* Page atelier 3D : la scène en grand, un panneau à droite (en dessous sur téléphone). */
+.atelier .retour {
+  display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 50%;
+  color: #fff; text-decoration: none; font-size: 22px; border: 1px solid #5a4b45;
+}
+.atelier .retour:hover { background: #4a3d38; }
+.atelier .onglets a {
+  border: 1px solid #5a4b45; color: #f1e9e2; padding: 7px 14px; border-radius: 999px; font-weight: 600; text-decoration: none;
+}
+.atelier .onglets a.actif { background: var(--accent); border-color: var(--accent); }
+
+.atelier-page {
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px 20px 24px;
+  max-width: 1500px; margin: 0 auto;
+}
+.scene {
+  position: relative; height: calc(100vh - 110px); min-height: 460px; border-radius: var(--rayon); overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, #3b3330 0%, #1f1a18 75%); box-shadow: var(--ombre);
+}
+.scene canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.scene canvas:active { cursor: grabbing; }
+.scene:fullscreen { height: 100vh; border-radius: 0; }
+.aide3d {
+  position: absolute; left: 12px; right: 12px; top: 10px; z-index: 3; pointer-events: none;
+  font-size: 12px; color: #d9cfc6; text-shadow: 0 1px 2px #000;
+}
+.chargement { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: #e8ddd4; font-weight: 600; }
+.boutons-scene { position: absolute; right: 12px; top: 34px; z-index: 4; display: flex; gap: 6px; }
+.boutons-scene button, .nav-etapes button, .bascules button {
+  border: 1px solid var(--trait); background: #fff; color: var(--texte); border-radius: 999px; padding: 6px 12px;
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.boutons-scene button { background: rgba(255, 255, 255, .92); }
+.bascules { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.bascules button[aria-pressed="true"] { background: #2b2320; color: #fff; border-color: #2b2320; }
+
+.etiquettes-atelier { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.etiquettes-atelier .et {
+  position: absolute; transform: translate(-50%, -100%); white-space: nowrap; pointer-events: auto; cursor: pointer;
+  font-size: 12px; font-weight: 700; color: #fff; background: rgba(43, 35, 32, .78); padding: 2px 7px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .25); transition: opacity .2s;
+}
+.etiquettes-atelier .et::after {
+  content: ""; position: absolute; left: 50%; top: 100%; width: 1px; height: 10px; background: rgba(255, 255, 255, .7);
+}
+.etiquettes-atelier .et.os { background: rgba(232, 220, 193, .92); color: #2b2320; }
+.etiquettes-atelier .et.choisi { background: var(--surbrillance); color: #2b2320; }
+.etiquettes-atelier .et.cache { opacity: .28; }
+
+.carte-choix {
+  position: absolute; left: 12px; bottom: 12px; z-index: 5; max-width: min(460px, calc(100% - 24px)); max-height: 52%;
+  overflow: auto; background: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  font-size: 14px;
+}
+.carte-choix h3 { margin: 0 0 2px; font-size: 18px; }
+.carte-choix .latin { margin: 0 0 6px; color: var(--doux); font-size: 13px; }
+.carte-choix p { margin: 6px 0; }
+.carte-choix .fermer { position: absolute; right: 8px; top: 6px; border: 0; background: none; font-size: 20px; cursor: pointer; }
+.carte-choix .liens { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; }
+.carte-choix a { color: var(--accent); font-weight: 600; }
+
+.panneau-atelier { display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 110px); overflow: auto; }
+.panneau-atelier .bloc { background: var(--carte); border-radius: var(--rayon); padding: 12px 14px; box-shadow: var(--ombre); }
+.panneau-atelier h2 { margin: 0 0 8px; font-size: 15px; text-transform: uppercase; letter-spacing: .4px; color: var(--accent); }
+.panneau-atelier h3 { margin: 10px 0 4px; font-size: 14px; }
+.note { margin: 0 0 8px; font-size: 13px; color: var(--doux); }
+.curseur { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; }
+#separer { width: 100%; accent-color: var(--accent); }
+
+.etapes { margin: 0 0 8px; padding-left: 22px; }
+.etapes li { margin: 4px 0; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.etapes li:hover { background: var(--fond); }
+.etapes li.faite { color: var(--doux); }
+.etapes li.faite strong::after { content: " ✓"; color: #3c8a4a; }
+.etapes li.courante { background: #fff5d6; outline: 2px solid var(--surbrillance); }
+.etapes li p { margin: 2px 0 0; font-size: 13px; }
+.nav-etapes { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.liste-atelier, .groupe-muscles ul { list-style: none; margin: 0; padding: 0; }
+.liste-atelier li, .groupe-muscles li {
+  display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; cursor: pointer;
+}
+.liste-atelier li:hover, .groupe-muscles li:hover { background: var(--fond); }
+.liste-atelier li.choisi, .groupe-muscles li.choisi { background: #fff5d6; }
+.pastille { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 1px solid rgba(0, 0, 0, .15); }
+.groupe-muscles h3 a { color: inherit; }
+.oeil { margin-left: auto; border: 0; background: none; cursor: pointer; font-size: 15px; opacity: .7; }
+.oeil[aria-pressed="false"] { opacity: .25; }
+.liste-atelier small, .groupe-muscles small { color: var(--doux); }
+
+.idee { border-left: 3px solid var(--accent-clair); padding: 2px 0 2px 10px; margin: 8px 0; }
+.idee strong { display: block; }
+.idee p { margin: 2px 0; font-size: 14px; }
+.idee .src, .carte-choix .src { font-size: 12px; color: var(--doux); }
+.sources { margin: 0; padding-left: 18px; font-size: 13px; }
+.sources li { margin: 3px 0; }
+
+@media (max-width: 900px) {
+  .atelier-page { grid-template-columns: 1fr; padding: 10px; }
+  .scene { height: 62vh; min-height: 360px; }
+  .panneau-atelier { max-height: none; }
+  .aide3d { display: none; }
+  .boutons-scene { top: 10px; }
+  .atelier .onglets { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; padding-bottom: 4px; }
+  .atelier .onglets a { white-space: nowrap; }
+}
+
+.voir-mof { margin: 0; padding-left: 18px; font-size: 14px; }
+.voir-mof li { margin: 6px 0; }
+.voir-mof a { color: var(--accent); font-weight: 600; }
+.voir-mof small { color: var(--doux); }
+.comment-faire { border: 1px solid var(--trait); border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
+.comment-faire summary { font-weight: 700; cursor: pointer; }
+.comment-faire ol { margin: 6px 0; padding-left: 20px; font-size: 14px; }
+.comment-faire li { margin: 3px 0; }
+.comment-faire .src { font-size: 12px; color: var(--doux); margin: 4px 0 0; }

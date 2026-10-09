@@ -5,6 +5,7 @@
 #   python outils/anatomie.py femur cotes   force la reconstruction de ces éléments
 #   python outils/anatomie.py tout       reconstruit tout
 #
+# Morceaux de viande : outils/viande.py (ils remplissent la carcasse, à partir des germes de muscles.py).
 # Étapes pour chaque os : distance signée sur une grille fine -> surface (marching cubes) ->
 # allègement -> ombrage des creux précalculé -> quantification sur 16 bits -> base64.
 # Les os pairs ne sont calculés qu'à gauche : l'appli fabrique le côté droit par symétrie.
@@ -135,12 +136,16 @@ def main(args):
         except ImportError:
             MUSCLES = {}
         mus = []
-        for mid, spec in MUSCLES.get(animal, {}).items():
-            cle = f"{animal}-muscle-{mid}"
-            d = None if (tout or mid in args or "muscles" in args) else charger(cle)
-            if d is None:
-                d = construire_muscle(animal, mid, spec)
-                ranger(cle, d)
+        specs = MUSCLES.get(animal, {})
+        # morceaux qui remplissent la carcasse (outils/viande.py), calculés tous ensemble
+        a_refaire = [mid for mid in specs
+                     if tout or mid in args or "muscles" in args or charger(f"{animal}-muscle-{mid}") is None]
+        if a_refaire:
+            from viande import construire_viande
+            for mid, d in construire_viande(animal).items():
+                ranger(f"{animal}-muscle-{mid}", d)
+        for mid, spec in specs.items():
+            d = charger(f"{animal}-muscle-{mid}")
             mus.append({"id": mid, "pieces": spec["pieces"], "pair": spec.get("pair", True), **emballer(d)})
         if mus:
             sortie[animal]["muscles"] = mus

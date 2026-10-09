@@ -161,17 +161,20 @@ class Repere:
 
 def plaque(R, pts, e, arrondi=0.003, decal=0.0, epaisseurs=None):
     """Os plat : polygone (u, v) dans le repère R, demi-épaisseur e (éventuellement variable :
-    epaisseurs(u, v) -> demi-épaisseur), bords arrondis."""
+    epaisseurs(u, v) -> demi-épaisseur), décalé de « decal » le long de la normale (nombre ou decal(u, v)),
+    bords arrondis."""
     pts = np.asarray(pts, np.float64)
 
     def f(P):
         u, v, w = R.local(P)
         d2 = polygone2d(u, v, pts) + arrondi
         ee = e if epaisseurs is None else epaisseurs(u, v)
-        dw = np.abs(w - decal) - (ee - arrondi)
+        dc = decal(u, v) if callable(decal) else decal
+        dw = np.abs(w - dc) - (ee - arrondi)
         dehors = np.sqrt(np.maximum(d2, 0) ** 2 + np.maximum(dw, 0) ** 2)
         return np.minimum(np.maximum(d2, dw), 0) + dehors - arrondi
-    coins = [R.point(u, v, s * (e + decal)) for u, v in pts for s in (-1, 1)]
+    dmax = 0.06 if callable(decal) else abs(decal)
+    coins = [R.point(u, v, s * (e + dmax)) for u, v in pts for s in (-1, 1)]
     emax = e if epaisseurs is None else 0.05
     lo = np.min(coins, 0) - emax - arrondi
     hi = np.max(coins, 0) + emax + arrondi
@@ -401,3 +404,253 @@ def miroir_z(prim):
     S = np.array([1, 1, -1], np.float32)
     lo, hi = prim.lo * S, prim.hi * S
     return Prim(lambda P: prim.f(P * S), np.minimum(lo, hi), np.maximum(lo, hi))
+
+
+# ---------------------------------------------------------------- os d'après une planche anatomique
+def _bilineaire(img, px, py, dehors):
+    """Échantillonne l'image img (2D float) aux positions (px, py) en pixels ; dehors = valeur hors image."""
+    h, w = img.shape
+    x0 = np.floor(px).astype(np.int64)
+    y0 = np.floor(py).astype(np.int64)
+    fx, fy = (px - x0).astype(np.float32), (py - y0).astype(np.float32)
+    ok = (x0 >= 0) & (y0 >= 0) & (x0 < w - 1) & (y0 < h - 1)
+    xc, yc = np.clip(x0, 0, w - 2), np.clip(y0, 0, h - 2)
+    v = (img[yc, xc] * (1 - fx) * (1 - fy) + img[yc, xc + 1] * fx * (1 - fy)
+         + img[yc + 1, xc] * (1 - fx) * fy + img[yc + 1, xc + 1] * fx * fy)
+    return np.where(ok, v, dehors).astype(np.float32)
+
+
+class Placement:
+    """Pose une figure de planche (pixels) dans le modèle : le point A_p de la planche va en A, B_p en B ;
+    la figure est dans le plan qui contient AB et qui est perpendiculaire à « normale » (redressée).
+    Sur une planche de profil, x de la planche = +x du modèle et y de la planche = -y du modèle :
+    « miroir » inverse ce sens (planche vue de l'autre côté)."""
+
+    def __init__(self, A_p, B_p, A, B, normale=(0, 0, 1), miroir=False, etirement=1.0):
+        A_p, B_p = np.asarray(A_p, np.float64), np.asarray(B_p, np.float64)
+        self.A, B = np.asarray(A, np.float64), np.asarray(B, np.float64)
+        self.U = n_(B - self.A)
+        Nn = np.asarray(normale, np.float64)
+        self.W = n_(Nn - (Nn @ self.U) * self.U)
+        self.V = np.cross(self.W, self.U)            # (U, V, W) direct ; V « en haut » dans le plan
+        d = B_p - A_p
+        dp = np.array([d[0], -d[1]])                 # planche : y vers le bas
+        if miroir:
+            dp[0] = -dp[0]
+        self.s = np.linalg.norm(B - self.A) / np.linalg.norm(dp)        # mètres par pixel (le long de AB)
+        self.e = etirement                                               # étirement en travers (épaisseur relative)
+        ang = np.arctan2(dp[1], dp[0])
+        self.c, self.sn = np.cos(ang), np.sin(ang)
+        self.A_p, self.miroir = A_p, miroir
+        self.longueur = float(np.linalg.norm(B - self.A))
+
+    def vers_planche(self, u, v):
+        """(u, v) en mètres dans le repère (U, V) depuis A -> pixels de la planche."""
+        a, b = u / self.s, v / (self.s * self.e)
+        qx, qy = a * self.c - b * self.sn, a * self.sn + b * self.c
+        if self.miroir:
+            qx = -qx
+        return self.A_p[0] + qx, self.A_p[1] - qy
+
+    def vers_modele(self, px, py):
+        qx, qy = px - self.A_p[0], -(py - self.A_p[1])
+        if self.miroir:
+            qx = -qx
+        a = qx * self.c + qy * self.sn
+        b = -qx * self.sn + qy * self.c
+        return self.A + self.U * a * self.s + self.V * b * self.s * self.e
+
+    def local(self, P):
+        q = P - self.A.astype(np.float32)
+        return q @ self.U.astype(np.float32), q @ self.V.astype(np.float32), q @ self.W.astype(np.float32)
+
+
+def lisser_contour(contour_px, pas=2.0, sigma=3.0):
+    """Contour fermé rééchantillonné tous les « pas » pixels puis lissé (gaussienne circulaire de sigma
+    points) : efface le tremblé du trait dessiné sans changer la forme."""
+    c = np.asarray(contour_px, np.float64)
+    c = np.vstack([c, c[:1]])
+    L = np.r_[0, np.cumsum(np.linalg.norm(np.diff(c, axis=0), axis=1))]
+    n = max(16, int(L[-1] / pas))
+    t = np.linspace(0, L[-1], n, endpoint=False)
+    r = np.stack([np.interp(t, L, c[:, 0]), np.interp(t, L, c[:, 1])], 1)
+    if sigma > 0:
+        k = int(3 * sigma)
+        w = np.exp(-0.5 * (np.arange(-k, k + 1) / sigma) ** 2)
+        w /= w.sum()
+        r = np.stack([np.convolve(np.r_[r[-k:, i], r[:, i], r[:k, i]], w, "valid") for i in range(2)], 1)
+    return r
+
+
+def cartes_silhouette(contour_px, forme="rond", k=1.0, plat=None, marge=12, lissage=1.5, sigma_contour=3.0, zones=()):
+    """Prépare, en pixels de planche, la distance signée au contour et la demi-épaisseur :
+    « rond » : section ronde (os long, k = rapport épaisseur / largeur) ;
+    « plat » : épaisseur constante plat (pixels) loin du bord, bord arrondi (os plat)."""
+    import cv2
+    cf = lisser_contour(contour_px, sigma=sigma_contour)
+    x0, y0 = np.floor(cf.min(0)).astype(int) - marge
+    x1, y1 = np.ceil(cf.max(0)).astype(int) + marge
+    # masque sur-échantillonné x4 (bord net), puis distances en pixels de planche
+    S = 4
+    mh = np.zeros(((y1 - y0 + 1) * S, (x1 - x0 + 1) * S), np.uint8)
+    cv2.fillPoly(mh, [np.round((cf - [x0, y0]) * S + (S - 1) / 2).astype(np.int32)], 1)
+    dinh = cv2.distanceTransform(mh, cv2.DIST_L2, 5) / S
+    douth = cv2.distanceTransform(1 - mh, cv2.DIST_L2, 5) / S
+    sdh = (douth - dinh).astype(np.float32)
+    sd = cv2.resize(sdh, (x1 - x0 + 1, y1 - y0 + 1), interpolation=cv2.INTER_AREA)
+    din = np.maximum(-sd, 0).astype(np.float32)
+    m = (sd < 0).astype(np.uint8)
+    if forme == "rond":
+        rmax = float(din.max())
+        r = max(3, int(rmax * 0.9))
+        rloc = cv2.dilate(din, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1)))
+        rloc = cv2.GaussianBlur(rloc, (0, 0), r * 0.5)
+        rloc = np.maximum(rloc, din)
+        t = k * np.sqrt(np.maximum(din * (2 * rloc - din), 0))
+    else:
+        t = plat * np.sqrt(np.clip(din / max(plat * 1.2, 1e-3), 0, 1) * (2 - np.clip(din / max(plat * 1.2, 1e-3), 0, 1)))
+    # zones d'épaisseur : [(polygone en pixels de planche, facteur), ...] (raccord progressif)
+    if zones:
+        fac = np.ones_like(t, np.float32)
+        for poly, facteur in zones:
+            zm = np.zeros_like(m)
+            cv2.fillPoly(zm, [np.asarray(poly, np.int32) - [x0, y0]], 1)
+            zm = cv2.GaussianBlur(zm.astype(np.float32), (0, 0), 6)
+            fac = fac * (1 + (facteur - 1) * zm)
+        t = t * fac
+    if lissage:
+        t = cv2.GaussianBlur(t.astype(np.float32), (0, 0), lissage)
+    t[m == 0] = 0
+    return {"sd": sd, "t": t.astype(np.float32), "origine": (x0, y0)}
+
+
+def silhouette(cartes, pose, decal=0.0, epaisseur=1.0, decal_b=None):
+    """Os « gonflé » d'après sa silhouette de planche : distance au contour dans le plan, demi-épaisseur
+    lue dans la carte (en travers du plan, décalée de « decal » mètres le long de W ; si decal_b est
+    donné, le décalage passe progressivement de decal en A à decal_b en B)."""
+    sd, t, (ox, oy) = cartes["sd"], cartes["t"], cartes["origine"]
+    s = pose.s
+    h, w = sd.shape
+    coins = [pose.vers_modele(ox + a, oy + b) for a in (0, w) for b in (0, h)]
+    tmax = float(t.max()) * s * epaisseur
+
+    def f(P):
+        u, v, ww = pose.local(P)
+        px, py = pose.vers_planche(u, v)
+        d2 = _bilineaire(sd, px - ox, py - oy, 50.0) * s
+        tt = _bilineaire(t, px - ox, py - oy, 0.0) * s * epaisseur
+        if decal_b is None:
+            dc = decal
+        else:
+            dc = decal + (decal_b - decal) * np.clip(u / pose.longueur, 0.0, 1.0)
+        dw = np.abs(ww - dc) - tt
+        dehors = np.sqrt(np.maximum(d2, 0) ** 2 + np.maximum(dw, 0) ** 2)
+        return np.minimum(np.maximum(d2, dw), 0) + dehors
+    dmax = max(abs(decal), abs(decal_b or 0.0))
+    lo = np.min(coins, 0) - tmax - dmax - 0.01
+    hi = np.max(coins, 0) + tmax + dmax + 0.01
+    return Prim(f, lo, hi)
+
+
+
+def relief(contour_px, trous_px, px_vers_xz, appuis_y, appuis_e, pas=0.003, marge=0.03):
+    """Os « en relief » d'après sa silhouette vue de DESSUS (bassin) : le contour (pixels de planche) est
+    reporté dans le plan (x, z) du modèle par px_vers_xz (affine 2x3) ; chaque point (x, z) de l'os est
+    à la hauteur y lue sur une surface lisse passant par les points d'appui (x, z, y), avec une
+    demi-épaisseur (normale à la surface) interpolée de même dans appuis_e (x, z, e)."""
+    import cv2
+    from scipy.interpolate import RBFInterpolator
+    M = np.asarray(px_vers_xz, np.float64)                      # [[ax, bx, cx], [az, bz, cz]]
+    Mi = np.linalg.inv(np.vstack([M, [0, 0, 1]]))[:2]           # (x, z) -> pixels
+    s_moy = np.sqrt(abs(np.linalg.det(M[:, :2])))               # mètres par pixel (moyen)
+    c = lisser_contour(contour_px, sigma=1.5)
+    x0, y0 = np.floor(c.min(0)).astype(int) - 10
+    x1, y1 = np.ceil(c.max(0)).astype(int) + 10
+    S = 4
+    mh = np.zeros(((y1 - y0 + 1) * S, (x1 - x0 + 1) * S), np.uint8)
+    cv2.fillPoly(mh, [np.round((c - [x0, y0]) * S + (S - 1) / 2).astype(np.int32)], 1)
+    for t in trous_px:
+        ct = lisser_contour(t, sigma=1.0)
+        cv2.fillPoly(mh, [np.round((ct - [x0, y0]) * S + (S - 1) / 2).astype(np.int32)], 0)
+    sdh = (cv2.distanceTransform(1 - mh, cv2.DIST_L2, 5) - cv2.distanceTransform(mh, cv2.DIST_L2, 5)) / S
+    sd = cv2.resize(sdh.astype(np.float32), (x1 - x0 + 1, y1 - y0 + 1), interpolation=cv2.INTER_AREA)
+    coins = np.array([[x0, y0, 1], [x1, y0, 1], [x0, y1, 1], [x1, y1, 1]], np.float64) @ M.T
+    xz_lo, xz_hi = coins.min(0) - marge, coins.max(0) + marge
+    gx = np.arange(xz_lo[0], xz_hi[0] + pas, pas)
+    gz = np.arange(xz_lo[1], xz_hi[1] + pas, pas)
+    GX, GZ = np.meshgrid(gx, gz, indexing="ij")
+    q = np.stack([GX.ravel(), GZ.ravel()], 1)
+    ay = np.asarray(appuis_y, np.float64)
+    ae = np.asarray(appuis_e, np.float64)
+    Ygrid = RBFInterpolator(ay[:, :2], ay[:, 2], kernel="thin_plate_spline", smoothing=1e-4)(q).reshape(GX.shape)
+    Egrid = RBFInterpolator(ae[:, :2], ae[:, 2], kernel="thin_plate_spline", smoothing=1e-4)(q).reshape(GX.shape)
+    Egrid = np.clip(Egrid, 0.004, 0.06)
+    gyx, gyz = np.gradient(Ygrid, pas, pas)
+    Ev = (Egrid * np.sqrt(1 + gyx ** 2 + gyz ** 2)).astype(np.float32)      # épaisseur mesurée à la verticale
+    Ygrid = Ygrid.astype(np.float32)
+    ylo, yhi = float((Ygrid - Ev).min()), float((Ygrid + Ev).max())
+    Mi32 = Mi.astype(np.float32)
+    YT, ET = np.ascontiguousarray(Ygrid.T), np.ascontiguousarray(Ev.T)
+
+    def f(P):
+        x, y, z = P[..., 0], P[..., 1], P[..., 2]
+        px = Mi32[0, 0] * x + Mi32[0, 1] * z + Mi32[0, 2]
+        py = Mi32[1, 0] * x + Mi32[1, 1] * z + Mi32[1, 2]
+        d2 = _bilineaire(sd, px - x0, py - y0, 50.0) * s_moy
+        ix = (x - gx[0]) / pas
+        iz = (z - gz[0]) / pas
+        yc = _bilineaire(YT, ix, iz, 0.0)
+        ev = _bilineaire(ET, ix, iz, 0.0)
+        dy = np.abs(y - yc) - ev
+        dehors = np.sqrt(np.maximum(d2, 0) ** 2 + np.maximum(dy, 0) ** 2)
+        return np.minimum(np.maximum(d2, dy), 0) + dehors
+    lo = np.array([xz_lo[0], ylo - 0.01, xz_lo[1]])
+    hi = np.array([xz_hi[0], yhi + 0.01, xz_hi[1]])
+    return Prim(f, lo, hi)
+
+
+
+def volume_profil(contour_px, pose, largeur, p=2.6, haut_etroit=0.7, pas_u=0.002):
+    """Volume dont le PROFIL est la silhouette de planche (posée par « pose ») et la LARGEUR une demi-largeur
+    donnée le long de l'axe A -> B (tableau [(u 0..1, demi-largeur m)]) : section en super-ellipse (exposant p)
+    qui suit la hauteur locale du profil, un peu plus étroite en haut (haut_etroit) qu'en bas. Pour le crâne."""
+    import cv2
+    cartes = cartes_silhouette(contour_px, forme="plat", plat=1.0)
+    sd, (ox, oy) = cartes["sd"], cartes["origine"]
+    s = pose.s
+    L = pose.longueur
+    larg = np.asarray(largeur, np.float64)
+    # étendue verticale (v) du profil pour chaque u (tranche de 2 mm)
+    h, w = sd.shape
+    yy, xx = np.nonzero(sd < 0)
+    Pm = np.array([pose.vers_modele(ox + x, oy + y) for x, y in zip(xx[::3], yy[::3])])
+    q = Pm - pose.A
+    uu, vv = q @ pose.U, q @ pose.V
+    u0, u1 = uu.min() - 0.01, uu.max() + 0.01
+    nb = int((u1 - u0) / pas_u) + 1
+    k = np.clip(((uu - u0) / pas_u).astype(int), 0, nb - 1)
+    vlo = np.full(nb, np.inf); vhi = np.full(nb, -np.inf)
+    np.minimum.at(vlo, k, vv); np.maximum.at(vhi, k, vv)
+    ok = np.isfinite(vlo)
+    idx = np.arange(nb)
+    vlo = np.interp(idx, idx[ok], vlo[ok]).astype(np.float32)
+    vhi = np.interp(idx, idx[ok], vhi[ok]).astype(np.float32)
+    lu = np.interp(u0 + idx * pas_u, larg[:, 0] * L, larg[:, 1]).astype(np.float32)
+    coins = [pose.vers_modele(ox + a, oy + b) for a in (0, w) for b in (0, h)]
+    wmax = float(larg[:, 1].max())
+
+    def f(P):
+        u, v, ww = pose.local(P)
+        px, py = pose.vers_planche(u, v)
+        d2 = _bilineaire(sd, px - ox, py - oy, 50.0) * s
+        i = np.clip((u - u0) / pas_u, 0, nb - 1).astype(np.int64)
+        lo_, hi_, lw = vlo[i], vhi[i], lu[i]
+        eta = np.clip((2 * v - lo_ - hi_) / np.maximum(hi_ - lo_, 1e-4), -1, 1)
+        forme = (1 - np.abs(eta) ** p) ** (1.0 / p)
+        hw = lw * forme * (1 - (1 - haut_etroit) * np.clip(eta, 0, 1))
+        dw = np.abs(ww) - hw
+        dehors = np.sqrt(np.maximum(d2, 0) ** 2 + np.maximum(dw, 0) ** 2)
+        return np.minimum(np.maximum(d2, dw), 0) + dehors
+    lo = np.min(coins, 0) - wmax - 0.01
+    hi = np.max(coins, 0) + wmax + 0.01
+    return Prim(f, lo, hi)

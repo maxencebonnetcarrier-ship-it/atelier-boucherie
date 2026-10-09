@@ -286,7 +286,9 @@ def rond_gite():
 
 def araignee():
     f = Forme()
-    f.ajouter(ell(p3(0.915, 0.945, 0.095), (0.065, 0.02, 0.05), rot=(0, 0, 8)), 0.012)
+    # contre la face ventrale du plancher du bassin, autour du trou obturé (OQLF : « muscle tapissant le trou
+    # d'articulation de l'os de la hanche ») ; environ 0,5 kg
+    f.ajouter(ell(p3(0.912, 0.925, 0.1), (0.07, 0.03, 0.055), rot=(0, 0, 8)), 0.012)
     return f
 
 
@@ -318,7 +320,8 @@ MUSCLES_BOEUF = {
     "collier": {"forme": collier, "pieces": ["collier"]},
     "basses-cotes": {"forme": basses_cotes, "pieces": ["basses-cotes"]},
     "cotes-entrecotes": {"forme": entrecotes, "pieces": ["cotes-entrecotes"]},
-    "faux-filet": {"forme": faux_filet, "pieces": ["faux-filet"]},
+    # domaine : région anatomique où le morceau peut grandir (X, Y, Z = coordonnées des voxels)
+    "faux-filet": {"forme": faux_filet, "pieces": ["faux-filet"], "domaine": lambda X, Y, Z: X < 0.5},
     "filet": {"forme": filet, "pieces": ["filet"]},
     "onglet": {"forme": onglet, "pieces": ["onglet"]},
     "hampe": {"forme": hampe, "pieces": ["hampe"]},
@@ -334,12 +337,19 @@ MUSCLES_BOEUF = {
     "macreuse-a-pot-au-feu": {"forme": macreuse_pot, "pieces": ["macreuse-a-pot-au-feu"]},
     "jumeau-a-pot-au-feu": {"forme": jumeau_pot, "pieces": ["jumeau-a-pot-au-feu"]},
     "gite-avant": {"forme": gite_avant, "pieces": ["gite-avant"]},
-    "rumsteck": {"forme": rumsteck, "pieces": ["rumsteck"]},
-    "aiguillette-baronne": {"forme": aiguillette_baronne, "pieces": ["aiguillette-baronne"]},
-    "tende-de-tranche": {"forme": tende_tranche, "pieces": ["tende-de-tranche"]},
-    "tranche-grasse": {"forme": tranche_grasse, "pieces": ["tranche-grasse"]},
+    # rumsteck : sur l'aile de l'ilium, devant la ligne articulation de la hanche -> bout du sacrum ; derrière,
+    # la croupe appartient au gîte à la noix (biceps fémoral)
+    "rumsteck": {"forme": rumsteck, "pieces": ["rumsteck"],
+                 "domaine": lambda X, Y, Z: (Y > 1.02 + 0.5 * (X - 0.62) ** 2)
+                                            & (X < 0.84 - 0.25 * (Y - 1.0) + 0.6 * (Z - 0.18) ** 2)},
+    "aiguillette-baronne": {"forme": aiguillette_baronne, "pieces": ["aiguillette-baronne"], "vitesse": 3},
+    "tende-de-tranche": {"forme": tende_tranche, "pieces": ["tende-de-tranche"],
+                         "domaine": lambda X, Y, Z: (Y < 1.1 + 0.25 * np.clip(X - 0.95, 0, None)) & (Z < 0.2)},
+    "tranche-grasse": {"forme": tranche_grasse, "pieces": ["tranche-grasse"],
+                       # bord haut en dôme (pas un plan) : un muscle n'est jamais coupé droit
+                       "domaine": lambda X, Y, Z: (X < 0.86) & (Y < 1.15 - 2.2 * (X - 0.7) ** 2 - 0.8 * (Z - 0.25) ** 2)},
     "gite-a-la-noix": {"forme": gite_noix, "pieces": ["gite-a-la-noix"]},
-    "rond-de-gite": {"forme": rond_gite, "pieces": ["rond-de-gite"]},
+    "rond-de-gite": {"forme": rond_gite, "pieces": ["rond-de-gite"], "domaine": lambda X, Y, Z: Y < 1.2},
     "araignee": {"forme": araignee, "pieces": ["araignee"]},
     "gite-arriere": {"forme": gite_arriere, "pieces": ["gite-arriere"]},
     "plat-de-joue": {"forme": plat_de_joue, "pieces": ["plat-de-joue"]},

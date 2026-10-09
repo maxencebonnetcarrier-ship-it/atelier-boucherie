@@ -8,10 +8,11 @@ import vm from "node:vm";
 const APP = process.env.APP_DIR || join(dirname(dirname(fileURLToPath(import.meta.url))), "app");
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js"]) {
+for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js",
+  "data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js"]) {
   vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx, { filename: f });
 }
-const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D, OS, CLASSEUR, ANATOMIE } = ctx.window;
+const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D, OS, CLASSEUR, ANATOMIE, ATELIER, ATELIER_MAILLAGES } = ctx.window;
 
 const erreurs = [];
 const err = (m) => erreurs.push(m);
@@ -20,6 +21,9 @@ const err = (m) => erreurs.push(m);
 const page = readFileSync(join(APP, "index.html"), "utf8");
 for (const [, src] of page.matchAll(/<script src="([^"]+)"/g)) if (!existsSync(join(APP, src))) err(`index.html : script manquant ${src}`);
 for (const [, href] of page.matchAll(/<link[^>]+href="([^"]+)"/g)) if (!/^https?:/.test(href) && !existsSync(join(APP, href))) err(`index.html : fichier manquant ${href}`);
+const pageAtelier = readFileSync(join(APP, "atelier.html"), "utf8");
+for (const [, src] of pageAtelier.matchAll(/<script src="([^"]+)"/g)) if (!existsSync(join(APP, src))) err(`atelier.html : script manquant ${src}`);
+for (const [, href] of pageAtelier.matchAll(/<link[^>]+href="([^"]+)"/g)) if (!/^https?:/.test(href) && !existsSync(join(APP, href))) err(`atelier.html : fichier manquant ${href}`);
 
 // --- décodage des données compressées des modèles (même format que app/vue3d.js)
 const octets = (b64) => new Uint8Array(Buffer.from(b64, "base64"));
@@ -152,9 +156,109 @@ else {
   }
 }
 
+// --- page atelier : chaque muscle, os, repère et source cités existent, dans les deux sens (toutes les régions)
+let nbMusclesAtelier = 0, nbReperes = 0;
+const regionsAtelier = ATELIER ? Object.keys(ATELIER.regions) : [];
+if (!ATELIER || !ATELIER_MAILLAGES) err("atelier : data/atelier.js ou les formes 3D (data/atelier-<région>.js) absents");
+else {
+  // la page charge data/atelier-<région>.js à la demande : chaque région doit avoir son fichier
+  for (const r of regionsAtelier) if (!ATELIER_MAILLAGES[r]) err(`atelier : formes 3D de la région ${r} absentes (data/atelier-${r}.js)`);
+  for (const r of Object.keys(ATELIER_MAILLAGES)) if (!ATELIER.regions[r]) err(`atelier : formes 3D ${r} sans région dans data/atelier.js`);
+  const mesh = new Map(), osMesh = new Map(), reperesMesh = {};
+  for (const r of regionsAtelier) {
+    const M = ATELIER_MAILLAGES[r];
+    if (!M) continue;
+    for (const m of M.muscles) { if (mesh.has(m.id)) err(`atelier : muscle ${m.id} dans deux régions`); mesh.set(m.id, { ...m, region: r }); }
+    for (const o of M.os) osMesh.set(o.id, { ...o, region: r });
+    for (const [osId, l] of Object.entries(M.reperes)) reperesMesh[osId] = l;
+  }
+  const piecesBoeuf = new Set(PIECES.boeuf.map((p) => p.id));
+  const src = (liste, ou) => { if (!liste?.length) err(`${ou} : aucune source`); for (const s of liste || []) if (!ATELIER.sources[s]) err(`${ou} : source inconnue ${s}`); };
+  for (const [id, m] of Object.entries(ATELIER.muscles)) {
+    nbMusclesAtelier++;
+    if (!mesh.has(id)) err(`atelier : muscle ${id} sans forme 3D`);
+    if (m.piece && !piecesBoeuf.has(m.piece)) err(`atelier : muscle ${id} -> pièce inconnue ${m.piece}`);
+    if (!m.nom || !m.info || !m.separer) err(`atelier : muscle ${id} sans nom, description ou « comment le séparer »`);
+    if (!/^#[0-9a-f]{6}$/i.test(m.teinte || "")) err(`atelier : muscle ${id} teinte invalide`);
+    if (m.anat && !ATELIER.sources[m.anatSource]) err(`atelier : muscle ${id} nom anatomique sans source`);
+    src(m.sources, `atelier : muscle ${id}`);
+    if (mesh.has(id) && m.piece && mesh.get(id).piece !== m.piece) err(`atelier : muscle ${id} rattaché à ${mesh.get(id).piece} dans la 3D, à ${m.piece} dans le texte`);
+  }
+  for (const id of mesh.keys()) if (!ATELIER.muscles[id]) err(`atelier : forme 3D ${id} sans texte`);
+  for (const [r, R] of Object.entries(ATELIER.regions)) {
+    if (!R.nom || !R.court || !R.gras || !R.vues?.length) err(`atelier : région ${r} incomplète (nom, nom court, gras, vues)`);
+    if (mesh.get(R.gras)?.region !== r) err(`atelier : région ${r} -> gras ${R.gras} absent de ses formes 3D`);
+    for (const [p, ids] of Object.entries(R.pieces)) {
+      if (!piecesBoeuf.has(p)) err(`atelier : pièce inconnue ${p}`);
+      for (const id of ids) {
+        if (ATELIER.muscles[id]?.piece !== p) err(`atelier : ${id} listé sous ${p}`);
+        if (mesh.has(id) && mesh.get(id).region !== r) err(`atelier : ${id} listé dans la région ${r}, forme 3D dans ${mesh.get(id).region}`);
+      }
+    }
+    for (const o of R.os) if (osMesh.get(o)?.region !== r) err(`atelier : os ${o} de la région ${r} sans forme 3D détaillée`);
+    // onglets de la région : chaque adresse mène à une vue qui existe
+    for (const [, h] of R.vues) {
+      const q = new URLSearchParams(h.replace(/^\?/, ""));
+      if (q.get("region") && !ATELIER.regions[q.get("region")]) err(`atelier : vue ${h} -> région inconnue`);
+      if (q.get("piece") && !ATELIER.regions[q.get("region")]?.pieces[q.get("piece")]) err(`atelier : vue ${h} -> pièce hors de la région`);
+      if (q.get("os") && !ATELIER.os[q.get("os")]) err(`atelier : vue ${h} -> os sans page`);
+      if (!q.get("region") && !q.get("os")) err(`atelier : vue ${h} sans région ni os`);
+    }
+    // étapes : muscles de la région, sourcés ; toute la région est levée dans l'ordre de découpe
+    const etapes = [...R.etapes, ...Object.values(R.etapesPieces).flat()];
+    for (const e of etapes) {
+      if (!e.titre || !e.texte) err(`atelier : étape incomplète ${e.titre}`);
+      for (const m of e.muscles) if (mesh.get(m)?.region !== r) err(`atelier : étape « ${e.titre} » -> muscle ${m} hors de la région ${r}`);
+      src(e.sources, `atelier : étape « ${e.titre} »`);
+    }
+    for (const p of Object.keys(R.etapesPieces)) if (!R.pieces[p]) err(`atelier : étapes pour une pièce hors de la région ${r} : ${p}`);
+    const leves = new Set(R.etapes.flatMap((e) => e.muscles));
+    for (const id of [R.gras, ...Object.values(R.pieces).flat()]) if (!leves.has(id)) err(`atelier : ${id} n'est levé à aucune étape (${r})`);
+  }
+  for (const [id, o] of Object.entries(ATELIER.os)) {
+    if (!osMesh.has(id)) err(`atelier : os ${id} sans forme 3D détaillée`);
+    if (!OS.boeuf.some((b) => b.id === id)) err(`atelier : os ${id} inconnu de l'appli`);
+    for (const m of o.muscles) {
+      if (!ATELIER.muscles[m]) err(`atelier : os ${id} -> muscle inconnu ${m}`);
+      else if (osMesh.has(id) && mesh.get(m)?.region !== osMesh.get(id).region) err(`atelier : os ${id} -> muscle ${m} d'une autre région`);
+    }
+    if (o.sourceReperes && !ATELIER.sources[o.sourceReperes]) err(`atelier : os ${id} -> source des repères inconnue`);
+  }
+  // repères : un texte pour chaque point, chaque point près de son os (moins de 4 cm de sa boîte)
+  for (const [osId, liste] of Object.entries(reperesMesh)) {
+    const e = osMesh.get(osId);
+    for (const r of liste) {
+      nbReperes++;
+      if (!ATELIER.reperes[r.id]) err(`atelier : repère ${r.id} sans texte`);
+      if (!e) { err(`atelier : repère ${r.id} pour un os sans forme 3D ${osId}`); continue; }
+      const [lo, hi] = e.boite;
+      if (r.point.some((v, i) => v < lo[i] - 0.04 || v > hi[i] + 0.04)) err(`atelier : repère ${r.id} loin de l'os ${osId}`);
+    }
+  }
+  for (const id of Object.keys(ATELIER.reperes)) if (!Object.values(reperesMesh).some((l) => l.some((r) => r.id === id))) err(`atelier : texte du repère ${id} sans point 3D`);
+  for (const i of ATELIER.presentation.general) src(i.sources, `atelier : idée « ${i.titre} »`);
+  for (const [p, l] of Object.entries(ATELIER.presentation.pieces)) {
+    if (!piecesBoeuf.has(p)) err(`atelier : idées d'étal pour une pièce inconnue ${p}`);
+    if (!regionsAtelier.some((r) => ATELIER.regions[r].pieces[p])) err(`atelier : idées d'étal pour ${p}, qui n'est dans aucune région`);
+    for (const i of l) src(i.sources, `atelier : idée « ${i.titre} »`);
+  }
+  for (const [k, s] of Object.entries(ATELIER.sources)) if (!s.titre) err(`atelier : source ${k} sans titre`);
+  // décor façon MOF : règles sourcées, liens photos / vidéos, fiches « comment faire »
+  const mof = ATELIER.presentation.mof;
+  if (!mof?.regles?.length || !mof.voir?.length || !mof.commentFaire?.length) err("atelier : partie MOF incomplète (règles, photos et vidéos, comment faire)");
+  else {
+    for (const i of mof.regles) src(i.sources, `atelier : MOF « ${i.titre} »`);
+    for (const v of mof.voir) if (!/^https:\/\//.test(ATELIER.sources[v.source]?.url || "")) err(`atelier : MOF « ${v.titre} » sans lien vers la photo ou la vidéo`);
+    for (const c of mof.commentFaire) {
+      src(c.sources, `atelier : comment faire « ${c.titre} »`);
+      if ((c.etapes || []).length < 3) err(`atelier : comment faire « ${c.titre} » : moins de 3 étapes`);
+    }
+  }
+}
+
 const nbPieces = ANIMAUX.reduce((n, a) => n + (PIECES[a.id]?.length || 0), 0);
 if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${ANIMAUX.length} animaux, ${nbPieces} pièces, ${Object.keys(RECETTES).length} recettes, ${nbOs} os, ${nbMuscles} muscles en volume, ${nbDenominations} dénominations du classeur, modèles 3D et fiches cohérents.`);
+console.log(`OK — ${ANIMAUX.length} animaux, ${nbPieces} pièces, ${Object.keys(RECETTES).length} recettes, ${nbOs} os, ${nbMuscles} muscles en volume, ${nbDenominations} dénominations du classeur, atelier : ${nbMusclesAtelier} muscles (${regionsAtelier.join(", ")}) et ${nbReperes} repères d'os, modèles 3D et fiches cohérents.`);

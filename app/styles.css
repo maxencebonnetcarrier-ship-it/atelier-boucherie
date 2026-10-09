@@ -274,3 +274,12 @@ body.plein-ecran-3d .outils3d button[aria-pressed="true"] { background: var(--ac
 @media (max-width: 900px) {
   .aide3d { left: 8px; right: auto; max-width: calc(100% - 16px); }
 }
+
+/* Liens vers la page atelier 3D */
+.lien-atelier { margin: 10px 0; }
+.lien-atelier a { display: inline-block; font-weight: 700; color: var(--accent); }
+.bouton-lien {
+  display: inline-block; border: 1px solid var(--accent); color: var(--accent); background: #fff; border-radius: 999px;
+  padding: 6px 12px; font-weight: 600; text-decoration: none; font-size: 14px;
+}
+.carte3d .bouton-lien { padding: 4px 10px; font-size: 13px; }

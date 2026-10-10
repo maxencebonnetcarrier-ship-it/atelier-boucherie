@@ -83,13 +83,13 @@ try {
   if (Math.abs(apres[0] - avant) < 1) erreurs.push(`glisser ne fait pas tourner l'animal (az ${avant} → ${apres[0]})`);
   if (apres[1] !== "#boeuf") erreurs.push(`glisser a sélectionné une pièce (${apres[1]})`);
 
-  // 4. Fiche complète : cuissons, transformations, recettes, équivalences.
+  // 4. Fiche complète : cuissons, transformations, équivalences ; les recettes sont dans leur onglet.
   await aller("#boeuf/paleron");
   await attendre(700);
   const contenu = await lire(`({ cuissons: document.querySelectorAll('#panneau .cuissons .puce').length,
     transfo: document.querySelectorAll('#panneau .transfo li').length,
-    recettes: document.querySelectorAll('#panneau details.recette').length,
-    ouverte: !!document.querySelector('#panneau details.recette[open]'),
+    recettesDansFiche: document.querySelectorAll('#panneau details.recette').length,
+    versRecettes: (document.querySelector('#panneau .vers-recettes a') || {}).getAttribute?.('href') || null,
     equiv: document.querySelectorAll('#panneau .equivalences a').length,
     selection: window.ATELIER3D.etatCourant().selection })`);
   const nomSel = await lire(`(() => { const s = document.querySelector('.etiquettes3d span.actif'); return s && s.style.visibility === 'visible' ? s.dataset.piece : null; })()`);
@@ -104,9 +104,29 @@ try {
     erreurs.push(`fiche paleron : classeur affiché ${JSON.stringify(classeur)} au lieu de ${cPal.guide.length} dénominations et ${cPal.magasin.length} fiches magasin`);
   }
   if (contenu.cuissons !== pal.cuissons.length || contenu.transfo !== pal.transformations.length
-    || contenu.recettes !== pal.recettes.length || !contenu.ouverte || contenu.equiv < 3 || contenu.selection !== "paleron") {
-    erreurs.push("fiche paleron incomplète : " + JSON.stringify(contenu));
+    || contenu.recettesDansFiche !== 0 || contenu.versRecettes !== "#recettes/boeuf/paleron" || contenu.equiv < 3 || contenu.selection !== "paleron") {
+    erreurs.push("fiche paleron incomplète (ou recettes encore dans la fiche) : " + JSON.stringify(contenu));
   }
+  // la carte de la pièce choisie est SOUS la vue 3D : elle ne cache rien
+  const carteP = await lire(`(() => { const c = document.getElementById('carte3d'), p = document.getElementById('planche');
+    if (!c || c.hidden) return null; return { dedans: p.contains(c), dessous: c.getBoundingClientRect().top >= p.getBoundingClientRect().bottom - 1,
+      titre: (c.querySelector('b') || {}).textContent, enGrand: !!c.querySelector('a[href^="atelier.html"]') }; })()`);
+  if (!carteP || carteP.dedans || !carteP.dessous || carteP.titre !== pal.nom || !carteP.enGrand) erreurs.push(`carte du paleron sous la 3D : ${JSON.stringify(carteP)}`);
+  // onglet Recettes : les recettes du paleron, la première ouverte ; toutes celles du bœuf sans pièce choisie
+  await lire(`document.querySelector('#panneau .vers-recettes a').click()`);
+  await attendre(400);
+  const rec = await lire(`({ hash: location.hash, n: document.querySelectorAll('#vue-recettes details.recette').length,
+    ouverte: !!document.querySelector('#vue-recettes details.recette[open]'), planche: !document.getElementById('vue-planche').hidden,
+    onglet: [...document.querySelectorAll('#onglets button')].find((b) => b.getAttribute('aria-current'))?.textContent })`);
+  if (rec.hash !== "#recettes/boeuf/paleron" || rec.n !== pal.recettes.length || !rec.ouverte || rec.planche || rec.onglet !== "Recettes") erreurs.push("onglet Recettes du paleron : " + JSON.stringify(rec));
+  const toutesBoeuf = new Set(PIECES.boeuf.flatMap((p) => p.recettes)).size;
+  await aller("#recettes/boeuf");
+  await attendre(300);
+  const nToutes = await lire("document.querySelectorAll('#vue-recettes details.recette').length");
+  if (nToutes !== toutesBoeuf) erreurs.push(`onglet Recettes (bœuf) : ${nToutes} recettes au lieu de ${toutesBoeuf}`);
+  await nav.capture(join(CAPTURES, "13-onglet-recettes.png"));
+  await aller("#boeuf/paleron");
+  await attendre(500);
   await lire("window.scrollTo(0,0)");
   await nav.capture(join(CAPTURES, "1-boeuf-paleron.png"));
 
@@ -231,7 +251,9 @@ try {
     await attendre(1000);
     await nav.glisser(l + w / 2 - 80, t + h * 0.2, l + w / 2 + 80, t + h * 0.2);
     const f = await lire("window.ATELIER3D.ecranOsChoisi()");
-    const loin = Math.hypot(f.x - (l + w / 2), f.y - (t + h * 0.4)) / Math.min(w, h);
+    // l'os choisi est au CENTRE de la vue (la carte de l'os est sous la vue, elle ne cache plus le bas : plus de
+    // décalage vers le haut) ; même tolérance qu'avant
+    const loin = Math.hypot(f.x - (l + w / 2), f.y - (t + h * 0.5)) / Math.min(w, h);
     if (loin > 0.03) erreurs.push(`geste « ${geste} » pendant le plongeon sur le sacrum : la vue ne tourne plus autour de l'os (écart ${(loin * 100).toFixed(0)} %)`);
   }
   // navigation libre : zoom bien plus fort qu'avant, déplacement (clic droit), vue par-dessous
@@ -350,6 +372,28 @@ try {
     const p1 = await lire("window.ATELIER3D.ecranOsChoisi()");
     if (!(p1.zoom > p0.zoom * 1.5)) erreurs.push(`téléphone : pincer ne zoome pas sur le fémur (${p0.zoom.toFixed(1)} → ${p1.zoom.toFixed(1)})`);
     if (ecart(p1, p0) > 0.03) erreurs.push(`téléphone : pincer fait quitter le fémur (${(ecart(p1, p0) * 100).toFixed(0)} %)`);
+  }
+
+  // téléphone : toucher un os ou une pièce dans la liste du bas remonte jusqu'à la 3D, qui le montre (signalé :
+  // « boîte à moelle marche pas », « le jumeau ça met pas la 3D »)
+  await lire(`document.querySelector('#outils3d [data-plein]').getAttribute('aria-pressed') === 'true' && document.querySelector('#outils3d [data-plein]').click()`);
+  for (const [hash, sel, attendu] of [["#boeuf/squelette", "#liste-pieces [data-os='humerus']", "#boeuf/squelette/humerus"],
+    ["#boeuf", "#liste-pieces [data-piece='jumeau-a-bifteck']", "#boeuf/jumeau-a-bifteck"]]) {
+    await aller(hash);
+    if (hash.includes("squelette")) await attendreSquelette();
+    await attendre(500);
+    await lire(`document.querySelector("${sel}").scrollIntoView({ block: 'center' })`);
+    await attendre(300);
+    const pt = await lire(`(() => { const r = document.querySelector("${sel}").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    await nav.cdp("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: pt[0], y: pt[1] }] });
+    await nav.cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await attendre(1500);
+    const [h, haut, bas, carte] = await lire(`(() => { const r = document.getElementById('planche').getBoundingClientRect(); const c = document.getElementById('carte3d');
+      return [location.hash, Math.round(r.top), Math.round(r.bottom - innerHeight), c && !c.hidden && c.getBoundingClientRect().top >= r.bottom - 1]; })()`);
+    if (h !== attendu) erreurs.push(`téléphone, liste : toucher ${sel} → ${h}`);
+    if (haut < 0 || bas > 0) erreurs.push(`téléphone, liste : après ${attendu}, la 3D n'est pas à l'écran (haut ${haut} px, dépasse en bas de ${bas} px)`);
+    if (!carte) erreurs.push(`téléphone, liste : après ${attendu}, la carte n'est pas sous la 3D`);
+    await nav.capture(join(CAPTURES, `14-mobile-liste-${attendu.split("/").pop()}.png`));
   }
 
   if (nav.journal.length) erreurs.push("erreurs JavaScript dans la page :\n   " + nav.journal.join("\n   "));

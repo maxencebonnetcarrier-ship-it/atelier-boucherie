@@ -15,7 +15,8 @@
 
   const $ = (id) => document.getElementById(id);
   const etat = { animal: ANIMAUX[0].id, piece: null, filtre: null, vue: "planche", montrer: true, squelette: false, os: null, eclate: false,
-    muscles: true, viande: false, autresOs: false, chargement: false, erreurAnatomie: null, recadrer: false };
+    muscles: true, viande: false, autresOs: false, chargement: false, erreurAnatomie: null, recadrer: false,
+    recettes: { animal: ANIMAUX[0].id, piece: null } };
 
   // Couleur d'une pièce sur le modèle 3D = sa famille de cuisson (même code pour les 4 animaux).
   // Plusieurs nuances par famille, pour que deux pièces voisines ne se confondent pas.
@@ -53,6 +54,13 @@
   function lireAdresse() {
     const [a, p, q] = decodeURIComponent(location.hash.replace(/^#/, "")).split("/");
     if (a === "comparatif") { etat.vue = "comparatif"; return; }
+    if (a === "etal") { etat.vue = "etal"; return; }
+    if (a === "recettes") {
+      etat.vue = "recettes";
+      const animal = ANIMAUX.some((x) => x.id === p) ? p : etat.animal;
+      etat.recettes = { animal, piece: q && pieceDe(animal, q) ? q : null };
+      return;
+    }
     etat.vue = "planche";
     if (ANIMAUX.some((x) => x.id === a)) {
       if (a !== etat.animal) { etat.filtre = null; etat.eclate = false; }
@@ -73,7 +81,17 @@
     allerA("#" + animal + "/squelette" + (os ? "/" + os : ""));
   }
   function allerA(cible) {
-    if (location.hash === cible) { lireAdresse(); rendre(); } else { location.hash = cible; }
+    if (location.hash === cible) { lireAdresse(); rendre(); montrer3D(); } else { location.hash = cible; }
+  }
+
+  // Sur téléphone, la vue 3D est en haut et les listes et la fiche en dessous : quand on choisit une pièce ou un
+  // os (liste, lien de la fiche, carte), on remonte jusqu'à la 3D pour le VOIR, si elle n'est pas déjà à l'écran.
+  function montrer3D() {
+    if (etat.vue !== "planche" || !(etat.piece || etat.os)) return;
+    if (!window.matchMedia("(max-width: 900px)").matches || document.body.classList.contains("plein-ecran-3d")) return;
+    const r = $("planche").getBoundingClientRect();
+    if (r.top >= 0 && r.bottom <= window.innerHeight) return;
+    window.scrollTo({ top: Math.max(0, r.top + window.scrollY - 8), behavior: "smooth" });
   }
 
   // ---------- rendu ----------
@@ -94,6 +112,15 @@
     if (etat.vue === "comparatif") c.setAttribute("aria-current", "page");
     c.addEventListener("click", () => { location.hash = "#comparatif"; });
     nav.appendChild(c);
+    // Recettes et mise en avant : à part, pour que la fiche d'une pièce reste courte
+    for (const [vue, nom, cible] of [["recettes", "Recettes", () => "#recettes/" + etat.animal], ["etal", "Mise en avant", () => "#etal"]]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = nom;
+      if (etat.vue === vue) b.setAttribute("aria-current", "page");
+      b.addEventListener("click", () => { location.hash = cible(); });
+      nav.appendChild(b);
+    }
   }
 
   let vue3d = null;
@@ -173,15 +200,31 @@
     $("planche").setAttribute("aria-label", `${nomAnimal(etat.animal)} en 3D : glisse pour le faire tourner, clique sur une pièce`);
   }
 
-  // Petite carte DANS la vue 3D quand on a plongé sur un os : on reste dans la 3D (sur téléphone,
-  // la page ne descend plus vers la fiche) ; la fiche complète reste à portée d'un bouton.
+  // Petite carte JUSTE SOUS la vue 3D quand une pièce ou un os est choisi : elle ne cache rien de la 3D ; elle
+  // mène aux muscles ou aux os voisins, à la vue en grand et à la fiche complète.
   function rendreCarte3d(os) {
     let carte = $("carte3d");
     if (!carte) {
       carte = document.createElement("div");
       carte.id = "carte3d";
       carte.className = "carte3d";
-      $("planche").appendChild(carte);
+      $("planche").after(carte);
+    }
+    $("planche").classList.toggle("choix", !!(os || etat.piece));
+    const piece = !etat.squelette && etat.piece && pieceDe(etat.animal, etat.piece);
+    if (piece) {
+      const sous = osDePiece(etat.animal, piece.id);
+      const enGrand = lienAtelierPiece(etat.animal, piece.id);
+      carte.hidden = false;
+      carte.innerHTML = `
+        <div class="titre"><b>${esc(piece.nom)}</b> <small>${esc(typeCuisson(piece).txt)}</small></div>
+        ${sous.length ? `<div class="muscles-lies">Os dessous : ${sous.map((o) => `<a href="#${etat.animal}/squelette/${o.id}">${esc(o.nom)}</a>`).join(" · ")}</div>` : ""}
+        <div class="actions">
+          <button type="button" data-fiche>Fiche ↓</button>
+          ${enGrand ? `<a class="bouton-lien" href="${enGrand}">Ses muscles en grand ↗</a>` : ""}
+          <button type="button" data-sortir aria-label="Revenir à l’animal entier">✕</button>
+        </div>`;
+      return;
     }
     const msg = !etat.squelette ? null : etat.chargement ? "Chargement du squelette et des muscles…"
       : etat.erreurAnatomie ? "Le squelette 3D n’a pas pu se charger : " + etat.erreurAnatomie : null;
@@ -299,7 +342,7 @@
       <div class="pas">
         <div><b>1</b><span>Fais tourner l’animal en glissant, puis touche une pièce (ou choisis-la dans la liste).</span></div>
         <div><b>2</b><span>Lis son mode de cuisson, ce qu’on en fait au billot et le conseil à donner.</span></div>
-        <div><b>3</b><span>Ouvre une recette simple à proposer au client.</span></div>
+        <div><b>3</b><span>Les recettes et les idées pour la vitrine sont dans les onglets « Recettes » et « Mise en avant ».</span></div>
       </div>
       <h3>Les modes de cuisson</h3>
       <div class="definitions">${Object.keys(CUISSONS).map((c) =>
@@ -307,14 +350,16 @@
     </div>`;
   }
 
-  function rendreRecette(id, ouverte) {
+  function rendreRecette(id, ouverte, pieces = []) {
     const r = RECETTES[id];
+    const avec = pieces.length ? `<div class="avec">Avec : ${pieces.map((p) => `<a href="#${etat.recettes.animal}/${p.id}">${esc(p.nom)}</a>`).join(" · ")}</div>` : "";
     return `<details class="recette"${ouverte ? " open" : ""}>
       <summary><span class="nom">${esc(r.nom)}</span><small>${esc(r.pour)} · ${esc(r.temps)}</small></summary>
       <div class="corps">
         <b>Ingrédients</b><ul>${r.ingredients.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>
         <b>Étapes</b><ol>${r.etapes.map((e) => `<li>${esc(e)}</li>`).join("")}</ol>
         <div class="client">💬 <b>Au comptoir :</b> ${esc(r.client)}</div>
+        ${avec}
       </div>
     </details>`;
   }
@@ -426,14 +471,13 @@
       <h3>Transformations bouchères</h3>
       <ul class="transfo">${piece.transformations.map(([n, d]) => `<li><b>${esc(n)}</b><span>${esc(d)}</span></li>`).join("")}</ul>
 
-      ${lienAtelierPiece(etat.animal, piece.id) ? `<p class="lien-atelier"><a href="${lienAtelierPiece(etat.animal, piece.id)}">Voir ses muscles en 3D, comment les séparer et des idées pour l’étal ↗</a></p>` : ""}
+      ${lienAtelierPiece(etat.animal, piece.id) ? `<p class="lien-atelier"><a href="${lienAtelierPiece(etat.animal, piece.id)}">Voir ses muscles en 3D et comment les séparer ↗</a></p>` : ""}
 
       ${rendreClasseur(piece)}
 
       ${rendreOsDePiece(piece)}
 
-      <h3>Recettes simples à proposer</h3>
-      ${piece.recettes.map((r, i) => rendreRecette(r, i === 0)).join("")}
+      ${piece.recettes.length ? `<p class="vers-recettes"><a class="bouton-lien" href="#recettes/${etat.animal}/${piece.id}">Ses recettes (${piece.recettes.length}) →</a></p>` : ""}
 
       ${rendreEquivalences(piece)}`;
     panneau.scrollTop = 0;
@@ -456,16 +500,64 @@
       <table class="tableau"><thead><tr><th>Région</th>${tete}</tr></thead><tbody>${lignes}</tbody></table>`;
   }
 
+  // ---------- onglet Recettes : toutes les recettes d'un animal, ou celles d'une pièce ----------
+  function rendreRecettes() {
+    const { animal, piece } = etat.recettes;
+    const parRecette = new Map();
+    for (const p of PIECES[animal]) for (const id of p.recettes || []) {
+      if (!RECETTES[id]) continue;
+      if (!parRecette.has(id)) parRecette.set(id, []);
+      parRecette.get(id).push(p);
+    }
+    const choix = piece && pieceDe(animal, piece);
+    const ids = choix ? choix.recettes.filter((id) => RECETTES[id])
+      : [...parRecette.keys()].sort((a, b) => RECETTES[a].nom.localeCompare(RECETTES[b].nom, "fr"));
+    $("vue-recettes").innerHTML = `
+      <h2>Recettes à proposer au client</h2>
+      <div class="choix-animal">${ANIMAUX.map((a) => `<a href="#recettes/${a.id}"${a.id === animal && !choix ? ` aria-current="page"` : ""}>${esc(a.nom)}</a>`).join("")}</div>
+      ${choix ? `<p class="note">Pour <b>${esc(choix.nom)}</b> (${esc(nomAnimal(animal))}) · <a href="#recettes/${animal}">toutes les recettes</a> · <a href="#${animal}/${choix.id}">revoir la pièce en 3D</a></p>`
+        : `<p class="note">${ids.length} recettes. Touche une recette pour l’ouvrir.</p>`}
+      ${ids.map((id, i) => rendreRecette(id, !!choix && i === 0, parRecette.get(id) || [])).join("")}`;
+  }
+
+  // ---------- onglet Mise en avant : le rayon traditionnel (photos et tutos à venir) ----------
+  function rendreEtal() {
+    const P = ATELIER && ATELIER.presentation;
+    if (!P) { $("vue-etal").innerHTML = `<h2>Mise en avant au rayon traditionnel</h2><p class="note">Contenu à venir.</p>`; return; }
+    const idee = (i) => `<div class="idee"><b>${esc(i.titre)}</b><p>${esc(i.texte)}</p></div>`;
+    const cles = new Set();
+    const noter = (l) => (l || []).forEach((s) => cles.add(s));
+    P.general.forEach((i) => noter(i.sources));
+    Object.values(P.pieces).flat().forEach((i) => noter(i.sources));
+    const mof = P.mof;
+    if (mof) { mof.regles.forEach((i) => noter(i.sources)); mof.voir.forEach((v) => cles.add(v.source)); mof.commentFaire.forEach((c) => noter(c.sources)); }
+    const source = (k) => { const s = ATELIER.sources[k]; return !s ? "" : s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.titre)}</a>` : esc(s.titre); };
+    $("vue-etal").innerHTML = `
+      <h2>Mise en avant au rayon traditionnel</h2>
+      <p class="note">À venir : des photos et des tutos pas à pas. En attendant, les idées et les vidéos ci-dessous.</p>
+      <h3>Pour toute la vitrine</h3>${P.general.map(idee).join("")}
+      ${mof ? `<h3>Chez les Meilleurs Ouvriers de France et aux examens</h3>${mof.regles.map(idee).join("")}
+        <h3>Comment faire</h3>${mof.commentFaire.map((c) => `<details class="comment-faire"><summary>${esc(c.titre)}</summary><ol>${c.etapes.map((e) => `<li>${esc(e)}</li>`).join("")}</ol></details>`).join("")}
+        <h3>Le voir en photo et en vidéo</h3><ul class="voir-mof">${mof.voir.map((v) => `<li><a href="${esc(ATELIER.sources[v.source].url)}" target="_blank" rel="noopener">${esc(v.titre)} ↗</a><br><small>${esc(v.texte)}</small></li>`).join("")}</ul>` : ""}
+      <h3>Idées par morceau (bœuf)</h3>
+      ${Object.entries(P.pieces).map(([p, l]) => `<details class="comment-faire"><summary>${esc((pieceDe("boeuf", p) || { nom: p }).nom)}</summary>${l.map(idee).join("")}</details>`).join("")}
+      <details class="sources-repli"><summary>Sources</summary><ul>${[...cles].filter((k) => ATELIER.sources[k]).map((k) => `<li>${source(k)}</li>`).join("")}</ul></details>`;
+  }
+
   function rendre() {
     // La vue est redessinée : la bulle de survol de l'ancienne pièce ne doit pas rester affichée.
     $("bulle").hidden = true;
     rendreOnglets();
-    const comparatif = etat.vue === "comparatif";
-    $("page").classList.toggle("mode-comparatif", comparatif);
-    $("vue-planche").hidden = comparatif;
-    $("panneau").hidden = comparatif;
-    $("vue-comparatif").hidden = !comparatif;
-    if (comparatif) { rendreComparatif(); return; }
+    const vue = etat.vue;
+    $("page").classList.toggle("mode-comparatif", vue !== "planche");
+    $("vue-planche").hidden = vue !== "planche";
+    $("panneau").hidden = vue !== "planche";
+    $("vue-comparatif").hidden = vue !== "comparatif";
+    $("vue-recettes").hidden = vue !== "recettes";
+    $("vue-etal").hidden = vue !== "etal";
+    if (vue === "comparatif") { rendreComparatif(); return; }
+    if (vue === "recettes") { rendreRecettes(); window.scrollTo(0, 0); return; }
+    if (vue === "etal") { rendreEtal(); window.scrollTo(0, 0); return; }
     rendre3D();
     rendreCouleurs();
     rendreLegende();
@@ -474,11 +566,10 @@
   }
 
   // ---------- interactions ----------
+  // Choisir une pièce : elle s'affiche en 3D (sur téléphone, la page remonte jusqu'à la 3D si besoin) ; sa fiche
+  // est sous la vue, à un bouton « Fiche ».
   function choisir(id) {
     aller(etat.animal, id);
-    if (window.matchMedia("(max-width: 900px)").matches) {
-      $("panneau").scrollIntoView({ behavior: "smooth", block: "start" });
-    }
   }
 
   // Clic sur le modèle : la pièce est déjà sous les yeux, on ne fait pas tourner la caméra.
@@ -487,8 +578,8 @@
     choisir(id);
   }
 
-  // Choisir un os : la vue plonge dessus. On reste dans la 3D (sur téléphone, la page ne descend plus
-  // vers la fiche : la carte dans la vue a un bouton « Fiche »).
+  // Choisir un os : la vue plonge dessus, et sur téléphone la page remonte jusqu'à la 3D si besoin (la carte
+  // sous la vue a un bouton « Fiche »).
   function choisirOs(id) {
     allerOs(etat.animal, id);
   }
@@ -525,8 +616,8 @@
     }
   });
 
-  // Carte de la plongée (dans la vue 3D).
-  $("planche").addEventListener("click", (e) => {
+  // Carte de la pièce ou de l'os choisi (sous la vue 3D).
+  $("vue-planche").addEventListener("click", (e) => {
     const b = e.target.closest("#carte3d button");
     if (!b) return;
     if (b.dataset.voir === "muscles") etat.muscles = !etat.muscles;
@@ -536,7 +627,9 @@
       basculerPleinEcran(false);
       $("panneau").scrollIntoView({ behavior: "smooth", block: "start" });
     }
-    if (b.hasAttribute("data-sortir")) { etat.recadrer = true; allerOs(etat.animal, null); }
+    if (b.hasAttribute("data-sortir")) {
+      if (etat.squelette) { etat.recadrer = true; allerOs(etat.animal, null); } else aller(etat.animal, null);
+    }
   });
 
   $("legende").addEventListener("click", (e) => {
@@ -575,7 +668,7 @@
     if (e.key === "Escape" && document.body.classList.contains("plein-ecran-3d")) basculerPleinEcran(false);
   });
 
-  window.addEventListener("hashchange", () => { lireAdresse(); rendre(); });
+  window.addEventListener("hashchange", () => { lireAdresse(); rendre(); montrer3D(); });
   lireAdresse();
   rendre();
 })();

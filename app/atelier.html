@@ -25,16 +25,19 @@
   </header>
 
   <main class="atelier-page">
-    <section class="scene" id="scene" aria-label="Vue 3D">
-      <div class="aide3d">Glisse pour tourner · molette ou deux doigts pour zoomer · clic droit ou deux doigts pour déplacer · double-clic pour s’approcher</div>
-      <div class="etiquettes-atelier" id="etiquettes"></div>
+    <div class="colonne-scene" id="colonne-scene">
+      <section class="scene" id="scene" aria-label="Vue 3D">
+        <div class="aide3d">Glisse pour tourner · molette ou deux doigts pour zoomer · clic droit ou deux doigts pour déplacer · double-clic pour s’approcher</div>
+        <div class="etiquettes-atelier" id="etiquettes"></div>
+        <div class="boutons-scene">
+          <button type="button" id="b-recadrer" title="Revoir l’ensemble">⟲ Ensemble</button>
+          <button type="button" id="b-plein" title="Plein écran">⛶ Plein écran</button>
+        </div>
+        <p class="chargement" id="chargement">Chargement des muscles et des os…</p>
+      </section>
+      <!-- ce qu'on a choisi : SOUS la 3D, pour ne rien cacher -->
       <div class="carte-choix" id="carte" hidden></div>
-      <div class="boutons-scene">
-        <button type="button" id="b-recadrer" title="Revoir l’ensemble">⟲ Ensemble</button>
-        <button type="button" id="b-plein" title="Plein écran">⛶ Plein écran</button>
-      </div>
-      <p class="chargement" id="chargement">Chargement des muscles et des os…</p>
-    </section>
+    </div>
 
     <aside class="panneau-atelier" id="panneau">
       <section class="bloc">
@@ -65,16 +68,11 @@
         <h2>Os</h2>
         <ul class="liste-atelier" id="liste-os"></ul>
       </section>
-      <section class="bloc" id="bloc-etal">
-        <h2>À l’étal traditionnel : idées de présentation</h2>
-        <p class="note">Au comptoir, les étoiles ★ du libre-service ne s’imposent pas (elles sont obligatoires seulement en libre-service) : on conseille le client de vive voix.</p>
-        <div id="etal"></div>
-      </section>
-      <section class="bloc">
-        <h2>Sources</h2>
+      <details class="bloc sources-bloc">
+        <summary>Sources</summary>
         <ul class="sources" id="sources"></ul>
         <p class="note">Forme des muscles et limites entre eux : modèle simplifié, fabriqué d’après les os et la forme du corps. Volumes et limites à faire valider par un formateur.</p>
-      </section>
+      </details>
     </aside>
   </main>
 

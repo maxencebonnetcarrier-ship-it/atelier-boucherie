@@ -68,7 +68,10 @@ async function cliquerChaque(ids, ou) {
       clics++;
       const [sel, carte] = await lire("[window.ATELIER3D.selection(), window.ATELIER3D.carte()]");
       const nom = ATELIER.muscles[id].nom;
-      if (!sel || sel.id !== id) {
+      // la carte de ce qu'on a choisi est SOUS la scène : elle ne cache rien de la 3D
+    const sousScene = await lire("(() => { const c = document.getElementById('carte'), s = document.getElementById('scene'); return !c.hidden && !s.contains(c) && c.getBoundingClientRect().top >= s.getBoundingClientRect().bottom - 1; })()");
+    if (!sousScene) erreurs.push(`${ou} : la carte de ${id} recouvre la 3D`);
+    if (!sel || sel.id !== id) {
         const apres = await lire(`window.ATELIER3D.toucher(${pt[0]}, ${pt[1]})`);
         erreurs.push(`${ou} : clic sur ${id} : choisi ${sel && sel.id} (visé avant : ${JSON.stringify(vise)}, après : ${JSON.stringify(apres)}, clic en ${tClic} ms)`);
       }
@@ -119,15 +122,9 @@ async function regionEntiere(rid, n) {
   await lire("document.getElementById('e-zero').click()");
   await attendre(300);
   if ((await lire("window.ATELIER3D.objets()")).some((x) => x.leve)) erreurs.push(`${rid} : « Tout remettre » : des muscles restent posés à côté`);
-  // étal : les idées des pièces de la région, celles de toute la vitrine et la partie MOF
-  const idees = await lire("document.querySelectorAll('#etal .idee').length");
-  const ideesAttendues = ATELIER.presentation.general.length + Object.keys(RR.pieces).flatMap((p) => ATELIER.presentation.pieces[p] || []).length
-    + ATELIER.presentation.mof.regles.length;
-  if (idees !== ideesAttendues) erreurs.push(`${rid} : ${idees} idées d'étal au lieu de ${ideesAttendues}`);
-  const nbVoir = await lire("document.querySelectorAll('#etal .voir-mof a[target=_blank]').length");
-  if (nbVoir !== ATELIER.presentation.mof.voir.length) erreurs.push(`${rid} : ${nbVoir} liens photos / vidéos MOF au lieu de ${ATELIER.presentation.mof.voir.length}`);
-  const fiches = await lire("[...document.querySelectorAll('#etal .comment-faire')].map((d) => { d.open = true; return d.querySelectorAll('ol li').length; })");
-  if (fiches.length !== ATELIER.presentation.mof.commentFaire.length || fiches.some((k) => k < 3)) erreurs.push(`${rid} : fiches « comment faire » ${JSON.stringify(fiches)}`);
+  // le texte n'est pas alourdi : plus d'idées d'étal ni de références de sources dans les étapes et la carte
+  const lourd = await lire("[document.querySelectorAll('#etal, #etapes .src, #carte .src a').length, document.querySelectorAll('#sources li').length]");
+  if (lourd[0] !== 0 || lourd[1] < 3) erreurs.push(`${rid} : texte alourdi (${lourd[0]} éléments d'étal ou de sources en ligne) ou sources absentes (${lourd[1]})`);
   // les onglets mènent aux vues de la région et à l'autre région
   const onglets = await lire("[...document.querySelectorAll('#vues a')].map((a) => a.getAttribute('href'))");
   for (const [, h] of RR.vues) if (!onglets.includes("atelier.html" + h)) erreurs.push(`${rid} : onglet ${h} absent`);
@@ -202,7 +199,7 @@ try {
   await lire(`document.querySelector('[data-repere="${attendusP.indexOf("fossa-infraspinata")}"]').click()`);
   await attendre(800);
   const [selP, carteP] = await lire("[window.ATELIER3D.selection(), window.ATELIER3D.carte()]");
-  if (!selP || selP.repere !== "fossa-infraspinata" || !carteP.includes("Fossa infraspinata") || !carteP.includes("IMAIOS")) erreurs.push(`palette : repère fosse infra-épineuse ${JSON.stringify(selP)} « ${(carteP || "").slice(0, 60)} »`);
+  if (!selP || selP.repere !== "fossa-infraspinata" || !carteP.includes("Fossa infraspinata") || !(await lire("document.getElementById('sources').textContent.includes('IMAIOS')"))) erreurs.push(`palette : repère fosse infra-épineuse ${JSON.stringify(selP)} « ${(carteP || "").slice(0, 60)} »`);
   await lire(`document.querySelector('[data-voir="autour"]').click()`);
   await attendre(1400);
   const autourP = await lire("window.ATELIER3D.objets().filter((x) => x.type === 'muscle')");
@@ -232,7 +229,7 @@ try {
   await lire(`document.querySelector('[data-repere="${attendusL.indexOf("l-processus-transversus")}"]').click()`);
   await attendre(800);
   const [selL, carteL] = await lire("[window.ATELIER3D.selection(), window.ATELIER3D.carte()]");
-  if (!selL || selL.repere !== "l-processus-transversus" || !carteL.includes("étagère") || !carteL.includes("IMAIOS")) erreurs.push(`lombaires : repère apophyse transverse ${JSON.stringify(selL)} « ${(carteL || "").slice(0, 60)} »`);
+  if (!selL || selL.repere !== "l-processus-transversus" || !carteL.includes("étagère") || !(await lire("document.getElementById('sources').textContent.includes('IMAIOS')"))) erreurs.push(`lombaires : repère apophyse transverse ${JSON.stringify(selL)} « ${(carteL || "").slice(0, 60)} »`);
   await nav.capture(join(CAPTURES, "atelier-16-lombaires.png"));
   await ouvrir("?region=aloyau&piece=filet");
   const RA = ATELIER.regions.aloyau;
@@ -291,6 +288,20 @@ try {
   const z1 = await lire("window.ATELIER3D.orientation().dist");
   if (!(z1 < z0 * 0.7)) erreurs.push(`téléphone : pincer ne zoome pas (${z0.toFixed(2)} → ${z1.toFixed(2)})`);
   await nav.capture(join(CAPTURES, "atelier-7-mobile-rumsteck.png"));
+  await ouvrir("?region=epaule");
+  await lire(`document.querySelector('#muscles [data-objet="jumeau-a-bifteck"]').scrollIntoView({ block: 'center' })`);
+  await attendre(300);
+  const ptL = await lire(`(() => { const r = document.querySelector('#muscles [data-objet="jumeau-a-bifteck"] span:nth-of-type(2)').getBoundingClientRect(); return [r.left + 10, r.top + r.height / 2]; })()`);
+  await nav.cdp("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: ptL[0], y: ptL[1] }] });
+  await nav.cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await attendre(1500);
+  const [selJ, hautJ, basJ] = await lire("(() => { const r = document.getElementById('scene').getBoundingClientRect(); return [window.ATELIER3D.selection(), Math.round(r.top), Math.round(r.bottom - innerHeight)]; })()");
+  if (!selJ || selJ.id !== "jumeau-a-bifteck") erreurs.push(`téléphone : toucher le jumeau dans la liste → ${JSON.stringify(selJ)}`);
+  if (hautJ < 0 || basJ > 0) erreurs.push(`téléphone : après le jumeau choisi dans la liste, la 3D n'est pas à l'écran (haut ${hautJ} px, dépasse en bas de ${basJ} px)`);
+  // et il est vraiment visible : le gras de couverture qui le recouvrait est retiré
+  const grasJ = await lire("window.ATELIER3D.objets().find((x) => x.type === 'gras').visible");
+  if (grasJ) erreurs.push("téléphone : le jumeau choisi dans la liste reste caché sous le gras de couverture");
+  await nav.capture(join(CAPTURES, "atelier-8b-mobile-liste-jumeau.png"));
   await nav.taille(1500, 950, false, 1);
 
   // 5. liens depuis l'appli et classeur marqué « libre-service »
@@ -318,6 +329,19 @@ try {
   await lire("location.hash = '#boeuf/squelette/palette'");
   await attendre(900);
   if (!(await lire("!!document.querySelector('#panneau a[href=\"atelier.html?os=palette\"]')"))) erreurs.push("appli : la fiche de la palette n'ouvre pas l'atelier");
+  await lire("location.hash = '#boeuf/tranche-grasse'");
+  await attendre(700);
+  // onglet « Mise en avant » : les idées de vitrine, la partie MOF (photos, vidéos, comment faire)
+  await lire("location.hash = '#etal'");
+  await attendre(600);
+  const etal = await lire(`({ idees: document.querySelectorAll('#vue-etal .idee').length, voir: document.querySelectorAll('#vue-etal .voir-mof a[target=_blank]').length,
+    fiches: [...document.querySelectorAll('#vue-etal .comment-faire')].length, planche: !document.getElementById('vue-planche').hidden })`);
+  const P = ATELIER.presentation;
+  const ideesAttendues = P.general.length + P.mof.regles.length + Object.values(P.pieces).flat().length;
+  if (etal.idees !== ideesAttendues || etal.voir !== P.mof.voir.length || etal.fiches !== P.mof.commentFaire.length + Object.keys(P.pieces).length || etal.planche) {
+    erreurs.push(`onglet Mise en avant : ${JSON.stringify(etal)} (attendu ${ideesAttendues} idées, ${P.mof.voir.length} liens)`);
+  }
+  await nav.capture(join(CAPTURES, "atelier-30-onglet-mise-en-avant.png"));
   await lire("location.hash = '#boeuf/tranche-grasse'");
   await attendre(700);
   // le lien s'ouvre vraiment

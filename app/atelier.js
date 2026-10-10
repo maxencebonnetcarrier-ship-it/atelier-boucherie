@@ -370,14 +370,14 @@
     }
     const i = o.info || {};
     return `<h3>${esc(o.nom)}</h3>
-      ${i.anat ? `<p class="latin">${esc(i.anat)}${i.anatSource ? ` <span class="src">(${lienSource(i.anatSource)})</span>` : ""}</p>` : ""}
+      ${i.anat ? `<p class="latin">${esc(i.anat)}</p>` : ""}
       <p>${esc(i.info || "")}</p>
       ${i.separer ? `<p><strong>Comment le séparer :</strong> ${esc(i.separer)}</p>` : ""}
       ${i.usage ? `<p><strong>Usage :</strong> ${esc(i.usage)}</p>` : ""}
       ${i.lettre ? `<p class="src">Lettre ${esc(i.lettre)} sur le tableau n° 2 du classeur.</p>` : ""}
       <div class="liens">${lienFiche(o.piece)}${o.piece && vue.piece !== o.piece && REGION.pieces[o.piece] && REGION.pieces[o.piece].length > 1
         ? `<a href="atelier.html?region=${REGION_ID}&piece=${o.piece}">Séparer « ${esc(nomPiece(o.piece))} » →</a>` : ""}</div>
-      <p class="src">Sources : ${(i.sources || []).map(lienSource).join(" ; ")}</p>`;
+`;
   }
   function montrerCarte(html) {
     const c = $("carte");
@@ -389,16 +389,31 @@
   function choisir(o, cadrerDessus = false) {
     choisi = o; repereChoisi = null;
     montrerCarte(carteHtml(o));
-    if (o && cadrerDessus) cadrer([o]);
+    // choisi dans une liste : on le MONTRE. Le gras de couverture qui le recouvre est retiré (le bouton « Gras »
+    // le remet).
+    if (o && cadrerDessus && o.type === "muscle" && voir.gras && objets.some((x) => x.type === "gras")) {
+      voir.gras = false;
+      const b = document.querySelector('#bascules [data-voir="gras"]');
+      if (b) b.setAttribute("aria-pressed", "false");
+    }
+    if (o && cadrerDessus) { cadrer([o]); montrerScene(); }
     majApparence();
+  }
+  // Sur téléphone, le panneau (listes, étapes) est sous la 3D : choisir dans une liste remonte jusqu'à la 3D
+  // pour VOIR ce qu'on a choisi, si elle n'est pas déjà à l'écran.
+  function montrerScene() {
+    if (!window.matchMedia("(max-width: 900px)").matches || document.fullscreenElement) return;
+    const r = sceneEl.getBoundingClientRect();
+    if (r.top >= 0 && r.bottom <= window.innerHeight) return;
+    window.scrollTo({ top: Math.max(0, r.top + window.scrollY - 6), behavior: "smooth" });
   }
   function choisirRepere(r) {
     choisi = osCentral; repereChoisi = r;
-    const srcRep = (A.os[osCentral.id] && A.os[osCentral.id].sourceReperes) || "imaios";
-    montrerCarte(`<h3>${esc(r.info.nom)}</h3><p class="latin">${esc(r.info.latin || "")} <span class="src">(${lienSource(srcRep)})</span></p>
+    montrerCarte(`<h3>${esc(r.info.nom)}</h3><p class="latin">${esc(r.info.latin || "")}</p>
       <p>${esc(r.info.boucher || "")}</p>`);
     aller({ cible: r.point.clone().add(osCentral.mesh.position), dist: Math.max(0.12, cam.dist * 0.6) });
     majApparence();
+    montrerScene();
   }
 
   // ---------- souris et doigts ----------
@@ -582,33 +597,16 @@
     // étapes
     const et = listeEtapes();
     $("bloc-etapes").hidden = !et.length;
-    $("etapes").innerHTML = et.map((e, i) => `<li data-etape="${i}"><strong>${esc(e.titre)}</strong><p>${esc(e.texte)}</p>
-      <p class="src">${(e.sources || []).map(lienSource).join(" ; ")}</p></li>`).join("");
+    $("etapes").innerHTML = et.map((e, i) => `<li data-etape="${i}"><strong>${esc(e.titre)}</strong><p>${esc(e.texte)}</p></li>`).join("");
     $("etapes").onclick = (e) => { const li = e.target.closest("[data-etape]"); if (li) allerEtape(+li.dataset.etape); };
     $("e-prec").onclick = () => allerEtape(Math.max(-1, etape - 1));
     $("e-suiv").onclick = () => allerEtape(Math.min(et.length - 1, etape + 1));
     $("e-zero").onclick = () => allerEtape(-1);
-    // étal
-    const pieces = vue.type === "os" ? [...new Set(objets.filter((o) => o.piece).map((o) => o.piece))]
-      : vue.piece ? [vue.piece] : Object.keys(REGION.pieces);
-    const mof = A.presentation.mof;
-    const idee = (i) => `<div class="idee"><strong>${esc(i.titre)}</strong><p>${esc(i.texte)}</p><p class="src">${(i.sources || []).map(lienSource).join(" ; ")}</p></div>`;
-    $("etal").innerHTML = pieces.filter((p) => A.presentation.pieces[p]).map((p) => `<h3>${esc(nomPiece(p))}</h3>${A.presentation.pieces[p].map(idee).join("")}`).join("")
-      + `<h3>Pour toute la vitrine</h3>${A.presentation.general.map(idee).join("")}`
-      + (mof ? `<h3>Chez les Meilleurs Ouvriers de France (MOF) et aux examens</h3>${mof.regles.map(idee).join("")}`
-        + `<h3>Le voir en photo et en vidéo</h3><ul class="voir-mof">${mof.voir.map((v) => `<li><a href="${esc(A.sources[v.source].url)}" target="_blank" rel="noopener">${esc(v.titre)} ↗</a><br><small>${esc(v.texte)}</small></li>`).join("")}</ul>`
-        + `<h3>Comment faire</h3>${mof.commentFaire.map((c) => `<details class="comment-faire"><summary>${esc(c.titre)}</summary><ol>${c.etapes.map((e) => `<li>${esc(e)}</li>`).join("")}</ol><p class="src">${c.sources.map(lienSource).join(" ; ")}</p></details>`).join("")}` : "");
-    // sources citées sur la page
+    // sources citées sur la page (repliées en bas : elles n'alourdissent plus le texte)
     const cles = new Set();
     for (const o of objets) (o.info && o.info.sources || []).forEach((s) => cles.add(s));
     et.forEach((e) => (e.sources || []).forEach((s) => cles.add(s)));
-    A.presentation.general.forEach((i) => i.sources.forEach((s) => cles.add(s)));
-    if (mof) {
-      mof.regles.forEach((i) => i.sources.forEach((s) => cles.add(s)));
-      mof.voir.forEach((v) => cles.add(v.source));
-      mof.commentFaire.forEach((c) => c.sources.forEach((s) => cles.add(s)));
-    }
-    pieces.forEach((p) => (A.presentation.pieces[p] || []).forEach((i) => i.sources.forEach((s) => cles.add(s))));
+    for (const o of objets) if (o.info && o.info.anatSource) cles.add(o.info.anatSource);
     if (reperes.length) cles.add((A.os[vue.id] && A.os[vue.id].sourceReperes) || "imaios");
     cles.add("planches"); cles.add("reussir");
     $("sources").innerHTML = [...cles].filter((c) => A.sources[c]).map((c) => `<li>${lienSource(c)}</li>`).join("");
@@ -621,7 +619,7 @@
     $("b-recadrer").onclick = () => recadrer();
     $("b-plein").onclick = () => {
       if (document.fullscreenElement) document.exitFullscreen();
-      else if (sceneEl.requestFullscreen) sceneEl.requestFullscreen().catch(() => {});
+      else if ($("colonne-scene").requestFullscreen) $("colonne-scene").requestFullscreen().catch(() => {});
     };
   }
   function allerEtape(i) {
@@ -631,7 +629,8 @@
     if (et) {
       const os = et.muscles.map((m) => parId.get(m)).filter(Boolean);
       if (os.length) { choisir(null); cadrer(objets.filter((o) => o.mesh.visible || os.includes(o)), 700); }
-      montrerCarte(`<h3>Étape ${i + 1} : ${esc(et.titre)}</h3><p>${esc(et.texte)}</p><p class="src">${(et.sources || []).map(lienSource).join(" ; ")}</p>`);
+      montrerCarte(`<h3>Étape ${i + 1} : ${esc(et.titre)}</h3><p>${esc(et.texte)}</p>`);
+      montrerScene();
     } else { montrerCarte(""); recadrer(); }
   }
   // angle de départ : l'os du bassin vu de trois quarts par-dessous (plancher et trou obturé visibles)

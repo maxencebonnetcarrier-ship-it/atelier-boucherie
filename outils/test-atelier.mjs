@@ -264,6 +264,37 @@ try {
   if ((await lire("document.querySelectorAll('#etapes li').length")) !== RF.etapesPieces.onglet.length) erreurs.push("onglet : étapes de séparation incomplètes");
   await nav.capture(join(CAPTURES, "atelier-25-onglet.png"));
 
+  // 3 sexies. parcours guidé : une seule étape à l'écran, du début à la fin
+  await ouvrir("?region=cuisse&pas=1");
+  const RC = ATELIER.regions.cuisse;
+  const panneauCache = await lire("getComputedStyle(document.getElementById('panneau')).display === 'none'");
+  if (!panneauCache) erreurs.push("pas à pas : le panneau (listes, réglages) reste affiché");
+  let pas0 = await lire("window.ATELIER3D.pas()");
+  if (!pas0 || pas0.etape !== -1 || !pas0.texte.includes("Commencer")) erreurs.push(`pas à pas : écran de départ ${JSON.stringify(pas0)}`);
+  for (let i = 0; i <= RC.etapes.length; i++) {
+    await lire(`document.querySelector('#carte-pas [data-pas="suiv"]').click()`);
+    await attendre(250);
+    await immobile();
+    const [p, objs, titres, noms] = await lire(`[window.ATELIER3D.pas(), window.ATELIER3D.objets(), document.querySelectorAll('#carte-pas h3').length, window.ATELIER3D.etiquettesVisibles()]`);
+    if (titres !== 1) erreurs.push(`pas à pas, étape ${i + 1} : ${titres} titres d'étape à l'écran au lieu d'un seul`);
+    if (i < RC.etapes.length) {
+      const e = RC.etapes[i];
+      if (p.etape !== i || !p.texte.includes(e.titre) || !p.texte.toLowerCase().includes(`étape ${i + 1} sur ${RC.etapes.length}`)) erreurs.push(`pas à pas, étape ${i + 1} : « ${p.texte.slice(0, 60)} »`);
+      for (const m of e.muscles) if (!objs.find((x) => x.id === m)?.courant) erreurs.push(`pas à pas, étape ${i + 1} : ${m} n'est pas surligné`);
+      for (const m of RC.etapes.slice(0, i).flatMap((x) => x.muscles)) if (!objs.find((x) => x.id === m)?.leve) erreurs.push(`pas à pas, étape ${i + 1} : ${m} n'est pas posé à côté`);
+      const typeDe = (id) => objs.find((x) => x.id === id)?.type;
+      const enTrop = noms.filter((id) => typeDe(id) !== "os" && !e.muscles.includes(id));
+      if (enTrop.length) erreurs.push(`pas à pas, étape ${i + 1} : noms affichés en trop ${enTrop}`);
+      if (i === 2) await nav.capture(join(CAPTURES, "atelier-31-pas-a-pas-etape.png"));
+    } else if (p.etape !== RC.etapes.length || !p.texte.includes("C’est fini") || objs.some((x) => x.type === "muscle" && !x.leve)) {
+      erreurs.push(`pas à pas : écran de fin ${JSON.stringify(p).slice(0, 120)}`);
+    }
+  }
+  await nav.capture(join(CAPTURES, "atelier-32-pas-a-pas-fin.png"));
+  await lire(`document.querySelector('#carte-pas [data-pas="prec"]').click()`);
+  await attendre(200);
+  if ((await lire("window.ATELIER3D.pas().etape")) !== RC.etapes.length - 1) erreurs.push("pas à pas : « Précédente » ne revient pas à la dernière étape");
+
   // 4. téléphone : la page tient en largeur, toucher un muscle le choisit
   await nav.taille(390, 844, true, 2);
   await ouvrir("?region=cuisse&piece=rumsteck");
@@ -302,13 +333,27 @@ try {
   const grasJ = await lire("window.ATELIER3D.objets().find((x) => x.type === 'gras').visible");
   if (grasJ) erreurs.push("téléphone : le jumeau choisi dans la liste reste caché sous le gras de couverture");
   await nav.capture(join(CAPTURES, "atelier-8b-mobile-liste-jumeau.png"));
+  // téléphone, parcours guidé du paleron : la 3D et l'étape tiennent dans l'écran ; toucher « à lever » explique
+  await ouvrir("?region=epaule&piece=paleron&pas=1");
+  await lire(`document.querySelector('#carte-pas [data-pas="suiv"]').click()`);
+  await attendre(900);
+  const ecranPas = await lire(`(() => { const s = document.getElementById('scene').getBoundingClientRect(), c = document.getElementById('carte-pas').getBoundingClientRect();
+    return { haut: Math.round(s.top), bas: Math.round(c.bottom - innerHeight), largeur: document.documentElement.scrollWidth - innerWidth }; })()`);
+  if (ecranPas.haut < 0 || ecranPas.bas > 0 || ecranPas.largeur > 2) erreurs.push(`téléphone, pas à pas : la 3D et l'étape ne tiennent pas dans l'écran ${JSON.stringify(ecranPas)}`);
+  const premier = ATELIER.regions.epaule.etapesPieces.paleron[0].muscles[0];
+  await lire(`document.querySelector('#carte-pas [data-m="${premier}"]').click()`);
+  await attendre(300);
+  const [txtPas, carteVisible] = await lire("[window.ATELIER3D.pas().texte, window.ATELIER3D.carte()]");
+  if (!txtPas.includes(ATELIER.muscles[premier].separer.slice(0, 30)) || carteVisible) erreurs.push(`téléphone, pas à pas : toucher « ${premier} » n'explique pas dans la carte de l'étape`);
+  await nav.capture(join(CAPTURES, "atelier-33-mobile-pas-a-pas-paleron.png"));
   await nav.taille(1500, 950, false, 1);
 
   // 5. liens depuis l'appli et classeur marqué « libre-service »
   await nav.aller(BASE + "index.html#boeuf/squelette", "document.readyState === 'complete' && !!window.ATELIER3D");
   await attendre(600);
   const liens = await lire("[...document.querySelectorAll('#liste-pieces a')].map((a) => a.getAttribute('href'))");
-  for (const h of ["atelier.html?region=cuisse", "atelier.html?os=coxal", "atelier.html?region=epaule", "atelier.html?os=palette", "atelier.html?region=aloyau", "atelier.html?region=avant", "atelier.html?region=flanc"]) {
+  for (const h of ["atelier.html?region=cuisse", "atelier.html?os=coxal", "atelier.html?region=epaule", "atelier.html?os=palette", "atelier.html?region=aloyau", "atelier.html?region=avant", "atelier.html?region=flanc",
+    ...Object.keys(ATELIER.regions).map((r) => `atelier.html?region=${r}&pas=1`)]) {
     if (!liens.includes(h)) erreurs.push(`appli : lien ${h} absent de la liste des os (${liens})`);
   }
   await lire("location.hash = '#boeuf/squelette/coxal'");
@@ -319,6 +364,7 @@ try {
   const [lienP, titreC] = await lire(`[!!document.querySelector('#panneau a[href="atelier.html?region=cuisse&piece=tranche-grasse"]'),
     [...document.querySelectorAll('#panneau h3')].map((h) => h.textContent).join(' | ')]`);
   if (!lienP) erreurs.push("appli : la fiche tranche grasse n'ouvre pas ses muscles en 3D");
+  if (!(await lire(`!!document.querySelector('#carte3d a[href="atelier.html?region=cuisse&piece=tranche-grasse&pas=1"]')`))) erreurs.push("appli : la carte de la tranche grasse n'ouvre pas le pas à pas");
   if (!titreC.includes("En libre-service")) erreurs.push(`appli : le classeur n'est pas marqué libre-service (${titreC})`);
   await lire("location.hash = '#boeuf/paleron'");
   await attendre(700);

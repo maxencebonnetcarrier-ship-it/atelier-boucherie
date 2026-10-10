@@ -215,12 +215,16 @@
     if (piece) {
       const sous = osDePiece(etat.animal, piece.id);
       const enGrand = lienAtelierPiece(etat.animal, piece.id);
+      const r = regionAtelier(piece.id);
+      const pasAPas = etat.animal === "boeuf" && r && ATELIER.regions[r].etapesPieces[piece.id]
+        ? `atelier.html?region=${r}&piece=${encodeURIComponent(piece.id)}&pas=1` : null;
       carte.hidden = false;
       carte.innerHTML = `
         <div class="titre"><b>${esc(piece.nom)}</b> <small>${esc(typeCuisson(piece).txt)}</small></div>
         ${sous.length ? `<div class="muscles-lies">Os dessous : ${sous.map((o) => `<a href="#${etat.animal}/squelette/${o.id}">${esc(o.nom)}</a>`).join(" · ")}</div>` : ""}
         <div class="actions">
           <button type="button" data-fiche>Fiche ↓</button>
+          ${pasAPas ? `<a class="bouton-lien" href="${pasAPas}">Séparer pas à pas ▶</a>` : ""}
           ${enGrand ? `<a class="bouton-lien" href="${enGrand}">Ses muscles en grand ↗</a>` : ""}
           <button type="button" data-sortir aria-label="Revenir à l’animal entier">✕</button>
         </div>`;
@@ -314,7 +318,11 @@
       const groupes = [...new Set(tous.map((o) => o.groupe))];
       const regions = etat.animal === "boeuf" && ATELIER
         ? `<h2>Atelier 3D</h2><div class="grille"><a class="bouton-lien" href="atelier.html?region=cuisse">Cuisse entière : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=coxal">Os du bassin et ses repères ↗</a><a class="bouton-lien" href="atelier.html?region=epaule">Épaule entière : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=palette">Palette (omoplate) et ses repères ↗</a><a class="bouton-lien" href="atelier.html?region=aloyau">Aloyau et train de côtes : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=lombaires">Vertèbres des reins et leurs repères ↗</a><a class="bouton-lien" href="atelier.html?region=avant">Collier, basses côtes et poitrine : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=sternum">Sternum et ses repères ↗</a><a class="bouton-lien" href="atelier.html?region=flanc">Flanchet, bavettes, onglet et hampe ↗</a></div>` : "";
-      liste.innerHTML = regions + `<h2>Tous les os (${tous.length})</h2>` + groupes.map((g) => `<h2 class="sous">${esc(g)}</h2><div class="grille">`
+      // le parcours guidé en premier : désosser une région une étape à la fois
+      const pas = etat.animal === "boeuf" && ATELIER
+        ? `<h2>Désosser pas à pas</h2><div class="grille">${Object.entries(ATELIER.regions).map(([r, R]) =>
+          `<a class="bouton-lien" href="atelier.html?region=${r}&pas=1">${esc(R.court)} ▶</a>`).join("")}</div>` : "";
+      liste.innerHTML = pas + regions + `<h2>Tous les os (${tous.length})</h2>` + groupes.map((g) => `<h2 class="sous">${esc(g)}</h2><div class="grille">`
         + tous.filter((o) => o.groupe === g).map((o) =>
           `<button type="button" class="${o.id === etat.os ? "active" : ""}" data-os="${o.id}">${esc(o.nom)}</button>`).join("")
         + `</div>`).join("");

@@ -37,6 +37,8 @@
       </section>
       <!-- ce qu'on a choisi : SOUS la 3D, pour ne rien cacher -->
       <div class="carte-choix" id="carte" hidden></div>
+      <!-- parcours guidé : une seule étape à l'écran -->
+      <div class="carte-pas" id="carte-pas" hidden aria-live="polite"></div>
     </div>
 
     <aside class="panneau-atelier" id="panneau">
@@ -48,6 +50,7 @@
       </section>
       <section class="bloc" id="bloc-etapes" hidden>
         <h2>Comment séparer</h2>
+        <a class="bouton-pas" id="lien-pas" href="#">▶ Pas à pas : une étape à la fois</a>
         <p class="note">Ordre indicatif, à faire valider par ton formateur. Les muscles déjà levés sont posés à côté.</p>
         <ol class="etapes" id="etapes"></ol>
         <div class="nav-etapes">

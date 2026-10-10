@@ -120,3 +120,29 @@
 .comment-faire ol { margin: 6px 0; padding-left: 20px; font-size: 14px; }
 .comment-faire li { margin: 3px 0; }
 .comment-faire .src { font-size: 12px; color: var(--doux); margin: 4px 0 0; }
+
+/* ---------- Parcours guidé (?pas=1) : une seule étape à l'écran ---------- */
+.bouton-pas { display: block; text-align: center; background: var(--accent); color: #fff; border-radius: 10px; padding: 10px;
+  font-weight: 700; text-decoration: none; margin: 0 0 10px; }
+.carte-pas { flex: none; background: #fff; border-radius: 12px; padding: 12px 16px; box-shadow: var(--ombre); font-size: 15px; }
+.pas-entete { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: .3px; }
+.pas-entete progress { flex: 1; height: 8px; accent-color: var(--accent); }
+.carte-pas h3 { margin: 6px 0 4px; font-size: 20px; line-height: 1.2; }
+.carte-pas p { margin: 4px 0; }
+.carte-pas .astuce { font-size: 13px; color: var(--doux); }
+.a-lever { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; font-size: 14px; }
+.a-lever button { border: 1px solid #d9a521; background: #fff5d6; border-radius: 999px; padding: 4px 10px;
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.a-lever button[aria-pressed="true"] { background: #f3c45a; }
+.info-muscle { background: var(--fond); border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+.nav-pas { display: flex; gap: 8px; margin-top: 10px; }
+.nav-pas button { flex: 1; border: 1px solid var(--trait); background: #fff; border-radius: 10px; padding: 10px;
+  font: inherit; font-weight: 700; cursor: pointer; }
+.nav-pas button.principal { background: var(--accent); border-color: var(--accent); color: #fff; }
+.carte-pas .quitter { display: inline-block; margin-top: 8px; font-size: 13px; color: var(--doux); }
+body.pas-a-pas #vues, body.pas-a-pas .panneau-atelier, body.pas-a-pas .carte-choix, body.pas-a-pas .aide3d { display: none !important; }
+body.pas-a-pas .atelier-page { grid-template-columns: 1fr; max-width: 1100px; }
+@media (max-width: 900px) {
+  body.pas-a-pas .scene { height: 50vh; min-height: 280px; }
+}

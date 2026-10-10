@@ -26,6 +26,10 @@
   const REGION = A.regions[REGION_ID];
   const vue = osDemande ? { type: "os", id: osDemande }
     : { type: "region", id: REGION_ID, piece: REGION.pieces[q.get("piece")] ? q.get("piece") : null };
+  // parcours guidé (?pas=1) : désosser la région (ou séparer la pièce) une étape à la fois, rien d'autre à l'écran
+  const PAS = vue.type === "region" && q.get("pas") === "1";
+  let infoPas = null;            // muscle touché pendant le parcours : son « comment le séparer » dans la carte
+  if (PAS) document.body.classList.add("pas-a-pas");
 
   // ---------- décodage des formes ----------
   function octets(b64) {
@@ -258,7 +262,7 @@
     et.forEach((e, i) => { if (i < etape) e.muscles.forEach((m) => leves.add(m)); else if (i === etape) e.muscles.forEach((m) => courants.add(m)); });
     for (const o of objets) {
       o.leve = leves.has(o.id); o.courant = courants.has(o.id);
-      const k = o.type === "os" ? 0 : (o.leve ? 0.5 : 0) + (o.courant ? 0.1 : 0) + separer * (vue.type === "os" ? 0.75 : vue.piece ? 0.55 : 0.26);
+      const k = o.type === "os" ? 0 : (o.leve ? 0.5 : 0) + (o.courant ? (PAS ? 0.2 : 0.1) : 0) + separer * (vue.type === "os" ? 0.75 : vue.piece ? 0.55 : 0.26);
       o.cible.copy(o.dir).multiplyScalar(k * rayonSeparation * (vue.type === "os" ? 1.4 : 1));
     }
     demanderRendu();
@@ -316,7 +320,9 @@
     const ordre = etiquettes.slice().sort((a, b) => (b.objet === choisi) - (a.objet === choisi));
     for (const e of ordre) {
       const o = e.objet;
-      const montre = voir.noms && o.mesh.visible;
+      const fini = PAS && etape >= listeEtapes().length;
+      const utile = !PAS || o.type === "os" || o.courant || (fini && o.type === "muscle");
+      const montre = voir.noms && o.mesh.visible && utile;
       if (!montre) { e.el.style.visibility = "hidden"; continue; }
       v3.copy(e.point).add(o.mesh.position).project(camera);
       if (v3.z > 1 || Math.abs(v3.x) > 1.05 || Math.abs(v3.y) > 1.05) { e.el.style.visibility = "hidden"; continue; }
@@ -387,6 +393,7 @@
     c.hidden = false;
   }
   function choisir(o, cadrerDessus = false) {
+    if (PAS) { choisi = o; repereChoisi = null; infoPas = o || null; rendrePas(); majApparence(); return; }
     choisi = o; repereChoisi = null;
     montrerCarte(carteHtml(o));
     // choisi dans une liste : on le MONTRE. Le gras de couverture qui le recouvre est retiré (le bouton « Gras »
@@ -597,6 +604,12 @@
     // étapes
     const et = listeEtapes();
     $("bloc-etapes").hidden = !et.length;
+    $("lien-pas").href = `atelier.html?region=${REGION_ID}${vue.piece ? `&piece=${vue.piece}` : ""}&pas=1`;
+    if (PAS) {
+      $("titre").textContent = (vue.piece ? "Séparer pas à pas : " : "Désosser pas à pas : ") + titre;
+      $("sous-titre").textContent = "Une étape à la fois";
+      document.title = $("titre").textContent + " — Atelier 3D";
+    }
     $("etapes").innerHTML = et.map((e, i) => `<li data-etape="${i}"><strong>${esc(e.titre)}</strong><p>${esc(e.texte)}</p></li>`).join("");
     $("etapes").onclick = (e) => { const li = e.target.closest("[data-etape]"); if (li) allerEtape(+li.dataset.etape); };
     $("e-prec").onclick = () => allerEtape(Math.max(-1, etape - 1));
@@ -622,6 +635,66 @@
       else if ($("colonne-scene").requestFullscreen) $("colonne-scene").requestFullscreen().catch(() => {});
     };
   }
+  // ---------- parcours guidé ----------
+  function rendrePas() {
+    const et = listeEtapes(), n = et.length, c = $("carte-pas");
+    const nom = vue.piece ? nomPiece(vue.piece) : REGION.nom;
+    const sortir = `atelier.html?region=${REGION_ID}${vue.piece ? `&piece=${vue.piece}` : ""}`;
+    let corps;
+    if (etape < 0) {
+      corps = `<h3>${vue.piece ? "Séparer" : "Désosser"} : ${esc(nom)}</h3>
+        <p>${n} étapes, une à la fois. À chaque étape, ce qu’il faut lever est <b>surligné en doré</b> ; ce qui est déjà levé est posé à côté.</p>
+        <p class="astuce">Fais tourner la 3D avec le doigt pour regarder sous tous les angles. Touche un muscle pour savoir comment le séparer.</p>`;
+    } else if (etape >= n) {
+      corps = `<h3>C’est fini !</h3>
+        <p>${esc(nom)} : ${vue.piece ? "chaque muscle est séparé, posé à côté des autres" : "chaque morceau est levé et posé autour de l’os"}.</p>`;
+    } else {
+      const e = et[etape];
+      corps = `<h3>${esc(e.titre)}</h3><p>${esc(e.texte)}</p>
+        <div class="a-lever">À lever : ${e.muscles.map((m) => parId.get(m)).filter(Boolean)
+          .map((o) => `<button type="button" data-m="${esc(o.id)}" aria-pressed="${infoPas === o}">${esc(o.nom)}</button>`).join("")}</div>`;
+    }
+    const texteInfo = infoPas && ((infoPas.info && (infoPas.info.separer || infoPas.info.info)) || (A.os[infoPas.id] && A.os[infoPas.id].info) || "");
+    const info = infoPas ? `<p class="info-muscle"><b>${esc(infoPas.nom)}</b> : ${esc(texteInfo)}</p>` : "";
+    const fait = etape < 0 ? 0 : Math.min(n, etape + 1);
+    c.innerHTML = `<div class="pas-entete"><span>${etape < 0 ? "Avant de commencer" : etape >= n ? "Terminé" : `Étape ${etape + 1} sur ${n}`}</span>
+        <progress max="${n}" value="${fait}"></progress></div>
+      ${corps}${info}
+      <div class="nav-pas">
+        ${etape >= 0 ? `<button type="button" data-pas="prec">◀ Précédente</button>` : ""}
+        ${etape < n ? `<button type="button" data-pas="suiv" class="principal">${etape < 0 ? "Commencer ▶" : etape === n - 1 ? "Terminer ▶" : "Suivante ▶"}</button>`
+          : `<button type="button" data-pas="zero" class="principal">↺ Recommencer</button>`}
+      </div>
+      <a class="quitter" href="${sortir}">Quitter le pas à pas</a>`;
+    c.hidden = false;
+  }
+  function allerPas(i) {
+    const n = listeEtapes().length;
+    etape = Math.max(-1, Math.min(n, i));
+    infoPas = null; choisi = null;
+    majPositions(); majApparence();
+    placerEtiquettes();          // les noms changent tout de suite (pas un nom d'étape d'avant qui traîne)
+    rendrePas();
+    if (etape < 0) recadrer();
+    else if (etape >= n) cadrer(objets.filter((o) => o.mesh.visible), 700);      // tous les morceaux autour de l'os
+    else {
+      // ce qui reste de la pièce (le morceau à lever compris) ; ce qui est déjà levé est posé à côté
+      const reste = objets.filter((o) => o.mesh.visible && !o.leve);
+      cadrer(reste.length ? reste : objets.filter((o) => o.courant), 700);
+    }
+  }
+  $("carte-pas").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-pas]");
+    if (b) { allerPas(b.dataset.pas === "zero" ? -1 : etape + (b.dataset.pas === "suiv" ? 1 : -1)); return; }
+    const m = e.target.closest("[data-m]");
+    if (m) choisir(parId.get(m.dataset.m));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!PAS || e.target.closest("input, textarea")) return;
+    if (e.key === "ArrowRight") allerPas(etape + 1);
+    if (e.key === "ArrowLeft") allerPas(etape - 1);
+  });
+
   function allerEtape(i) {
     etape = i;
     majPositions(); majApparence();
@@ -657,6 +730,7 @@
       majPositions(); majApparence();
       redimensionner();
       cadrer(objets.filter(aCadrer), 0, VUE_DEPART());
+      if (PAS) allerPas(-1);
       $("chargement").hidden = true;
     } catch (err) {
       $("chargement").textContent = "Impossible d’afficher cette vue : " + err.message;
@@ -682,6 +756,7 @@
     selection: () => (choisi ? { id: choisi.id, repere: repereChoisi && repereChoisi.id } : null),
     carte: () => ($("carte").hidden ? null : $("carte").innerText),
     etape: () => etape,
+    pas: () => (PAS ? { etape, total: listeEtapes().length, texte: $("carte-pas").innerText } : null),
     immobile: () => !enMouvement && !animCam && !prevu,
     orientation: () => ({ az: cam.az, el: cam.el, dist: cam.dist, cible: cam.cible.toArray() }),
     etiquettesVisibles: () => etiquettes.filter((e) => e.el.style.visibility === "visible").map((e) => e.repere ? e.repere.id : e.objet.id),

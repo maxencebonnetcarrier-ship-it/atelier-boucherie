@@ -294,7 +294,9 @@
   const VUE_DEPART = { az: -0.42, el: 0.22 };
   const ZOOM = { pieces: [0.8, 3.2], squelette: [0.6, 14] };
   const PROCHE_OS = 1.15;     // plongée : distance minimale caméra -> centre de l'os, en rayons de l'os
-  const DECAL_PLONGEE = 0.1;  // plongée : l'os est remonté de 10 % de la hauteur de la vue (au-dessus de la carte)
+  // plongée : décalage d'écran de l'os choisi. La carte de l'os est maintenant SOUS la vue (elle ne cache plus
+  // rien) : l'os reste centré.
+  const DECAL_PLONGEE = 0;
 
   // ---------- la vue ----------
   window.Vue3D = function (conteneur, rappels) {

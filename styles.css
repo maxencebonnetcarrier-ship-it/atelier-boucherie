@@ -241,9 +241,10 @@ details.fiche-magasin dd { margin: 0; }
 
 /* ---------- Plongée sur un os : carte dans la vue 3D, noms des muscles ---------- */
 .carte3d {
-  position: absolute; z-index: 3; left: 10px; bottom: 10px; max-width: min(440px, calc(100% - 20px));
-  background: rgba(255, 252, 247, .93); border-radius: 12px; box-shadow: var(--ombre); padding: 8px 10px; font-size: 13px;
+  margin: 8px 0 0; background: var(--carte); border-radius: 12px; box-shadow: var(--ombre); padding: 8px 10px; font-size: 13px;
 }
+/* une pièce ou un os choisi : l'aide (« glisse pour tourner ») laisse toute la vue à la 3D */
+.planche.choix .aide3d { display: none; }
 .carte3d .titre b { font-size: 15px; }
 .carte3d .titre small { color: var(--doux); }
 .carte3d .muscles-lies { margin: 3px 0 6px; }
@@ -258,8 +259,9 @@ details.fiche-magasin dd { margin: 0; }
 .etiquettes3d.muscles span { color: #fff; background: rgba(90, 22, 26, .78); border-radius: 4px; text-shadow: none; }
 .etiquettes3d.muscles span.actif { background: #ffd25e; color: #2b2320; }
 @media (max-width: 900px) {
-  .carte3d { left: 6px; right: 6px; bottom: 6px; max-width: none; padding: 6px 8px; }
+  .carte3d { padding: 6px 8px; }
 }
+body.plein-ecran-3d .carte3d { margin: 0; border-radius: 0; box-shadow: none; }
 
 /* ---------- Plein écran 3D : se plonger dans le squelette ---------- */
 body.plein-ecran-3d { overflow: hidden; }
@@ -283,3 +285,23 @@ body.plein-ecran-3d .outils3d button[aria-pressed="true"] { background: var(--ac
   padding: 6px 12px; font-weight: 600; text-decoration: none; font-size: 14px;
 }
 .carte3d .bouton-lien { padding: 4px 10px; font-size: 13px; }
+
+/* ---------- Onglets Recettes et Mise en avant ---------- */
+.vue-texte { grid-column: 1 / -1; max-width: 860px; width: 100%; margin: 0 auto; background: var(--carte); border-radius: var(--rayon); box-shadow: var(--ombre); padding: 18px 20px; }
+.vue-texte[hidden] { display: none; }
+.vue-texte h2 { margin: 0 0 8px; }
+.vue-texte h3 { margin: 18px 0 6px; }
+.vue-texte .note { color: var(--doux); }
+.choix-animal { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.choix-animal a { border: 1px solid var(--trait); border-radius: 999px; padding: 5px 12px; color: var(--texte); text-decoration: none; font-weight: 600; }
+.choix-animal a[aria-current] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.recette .avec { margin-top: 8px; font-size: 14px; color: var(--doux); }
+.recette .avec a { color: var(--accent); }
+.vers-recettes { margin: 12px 0; }
+.vue-texte .idee { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; margin: 8px 0; }
+.vue-texte .idee p { margin: 2px 0; }
+.vue-texte details.comment-faire { border: 1px solid var(--trait); border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
+.vue-texte details.comment-faire summary { font-weight: 700; cursor: pointer; }
+.vue-texte .voir-mof a { color: var(--accent); font-weight: 600; }
+.sources-repli { margin-top: 18px; font-size: 13px; color: var(--doux); }
+.sources-repli summary { cursor: pointer; }

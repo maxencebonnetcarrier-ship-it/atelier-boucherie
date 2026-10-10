@@ -260,13 +260,14 @@ def _plaque_sagittale(contour_px, vers, e, bout=None, e_bout=0.0, r_bout=0.025, 
     return plaque(R_SAG, pts, e, arrondi=arrondi, epaisseurs=ep)
 
 
-def dorsales():
+def dorsales(premiere=1, derniere=13):
     """Les 13 dorsales : corps courts, arc, apophyses articulaires et transverses (facettes des côtes) ;
     épines hautes et penchées vers la queue au garrot, de plus en plus courtes et droites vers les reins,
-    d'après la planche 3 (T12 et T13 déjà rectangulaires comme celles des lombaires)."""
+    d'après la planche 3 (T12 et T13 déjà rectangulaires comme celles des lombaires).
+    premiere / derniere : seulement une partie (l'atelier de l'aloyau prend de la 6e à la 13e)."""
     f = Forme()
     from planches_os import EPINES_T
-    for i in range(13):
+    for i in range(premiere - 1, derniere):
         nom = f"T{i + 1}"
         vertebre(f, nom, 0.024 + 0.0008 * i, haut_arc=0.024, canal=0.011, epine=None,
                  transv=(0.04, 0.012, 0.009, 0.008, 0.0), articulaires=0.009)
@@ -486,10 +487,14 @@ def _ribs():
     return _rib_cache
 
 
-def cotes():
-    """Les 13 côtes gauches : tête et tubercule contre les vertèbres, corps large et plat, cartilage en bas."""
+def cotes(premiere=1, derniere=13, sciees_a=None, garder="haut"):
+    """Les 13 côtes gauches : tête et tubercule contre les vertèbres, corps large et plat, cartilage en bas.
+    premiere / derniere : seulement une partie ; sciees_a : hauteur (m) du trait de scie, on garde le haut
+    (le train de côtes et l'aloyau sont sciés sur les côtes) ou le bas (garder="bas" : le plat de côtes)."""
     f = Forme()
     for i, (os_pts, cart) in enumerate(_ribs()):
+        if not premiere - 1 <= i < derniere:
+            continue
         c = courbe(os_pts, n=30)
         n = len(c)
         t = np.linspace(0, 1, n)
@@ -504,6 +509,10 @@ def cotes():
         cc = courbe(cart, n=12)
         ac = np.linspace(a[-1] * 0.8, 0.008, len(cc))
         f.ajouter(loft(cc, ac, np.full(len(cc), 0.006), haut=(1, 0, 0), arrondi=0.002), 0.003, "cartilage")
+    if sciees_a is not None and garder == "bas":
+        f.couper(Prim(lambda P, y=np.float32(sciees_a): P[..., 1] - y, (-3, -1, -3), (3, sciees_a, 3)))
+    elif sciees_a is not None:
+        f.couper(Prim(lambda P, y=np.float32(sciees_a): y - P[..., 1], (-3, sciees_a, -3), (3, 3, 3)))
     return f
 
 

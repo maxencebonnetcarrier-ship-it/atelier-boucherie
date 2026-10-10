@@ -89,8 +89,8 @@
     for (const id of osDeLaVue()) {
       const e = oDispo.get(id);
       if (!e) continue;
-      // demi-carcasse : le sacrum est fendu au milieu (on ne garde que le côté gauche, z ≥ 0)
-      const mat = window.Materiaux3D.os({ coupeZ: id === "sacrum" ? 0 : -10,
+      // demi-carcasse : la colonne (sacrum, vertèbres) est fendue au milieu, on ne garde que le côté gauche (z ≥ 0)
+      const mat = window.Materiaux3D.os({ coupeZ: (REGION.fendus || []).includes(id) ? 0 : -10,
         couleursParties: A.partiesCoxal.map((p) => p.couleur) });
       const o = ajouter("os", id, geometrie(e), mat, { nom: nomOs(id) });
       o.mesh.renderOrder = 1;
@@ -148,6 +148,10 @@
     }
     centreScene.copy(C);
     rayonScene = boite.getSize(new T.Vector3()).length() / 2;
+    // écartement des muscles : à l'échelle de la pièce dans une vue « pièce » (un onglet n'est pas écarté
+    // comme une cuisse entière), de toute la scène sinon
+    rayonSeparation = vue.piece && !boiteMuscles.isEmpty() ? Math.max(boiteMuscles.getSize(new T.Vector3()).length() / 2, 0.05)
+      : Math.max(rayonScene, 0.25);
   }
 
   // ---------- rendu ----------
@@ -159,7 +163,7 @@
   const scene = new T.Scene();
   const camera = new T.PerspectiveCamera(32, 1, 0.001, 50);
   const centreScene = new T.Vector3();
-  let rayonScene = 1;
+  let rayonScene = 1, rayonSeparation = 1;
   const cam = { az: 0.45, el: 0.22, dist: 3, cible: new T.Vector3() };
   let animCam = null, prevu = false, enMouvement = false;
 
@@ -233,7 +237,9 @@
       lx = Math.max(lx, Math.abs(p.dot(droite))); ly = Math.max(ly, Math.abs(p.dot(haut))); lz = Math.max(lz, Math.abs(p.dot(recul)));
     }
     const t = Math.tan(T.MathUtils.degToRad(camera.fov) / 2);
-    const dist = Math.max(lx / (t * Math.max(camera.aspect, 0.1)), ly / t) * 1.08 + lz * 0.5;
+    // un os seul : plus de marge, pour que les noms posés à ses bouts restent dans le cadre
+    const marge = vue.type === "os" ? 1.22 : 1.08;
+    const dist = Math.max(lx / (t * Math.max(camera.aspect, 0.1)), ly / t) * marge + lz * 0.5;
     aller({ ...vers, cible: c, dist: Math.max(0.05, dist) }, duree);
   }
 
@@ -253,7 +259,7 @@
     for (const o of objets) {
       o.leve = leves.has(o.id); o.courant = courants.has(o.id);
       const k = o.type === "os" ? 0 : (o.leve ? 0.5 : 0) + (o.courant ? 0.1 : 0) + separer * (vue.type === "os" ? 0.75 : vue.piece ? 0.55 : 0.26);
-      o.cible.copy(o.dir).multiplyScalar(k * Math.max(rayonScene, 0.25) * (vue.type === "os" ? 1.4 : 1));
+      o.cible.copy(o.dir).multiplyScalar(k * rayonSeparation * (vue.type === "os" ? 1.4 : 1));
     }
     demanderRendu();
   }
@@ -489,7 +495,10 @@
   };
   toile.addEventListener("pointerup", fin);
   toile.addEventListener("pointercancel", fin);
-  toile.addEventListener("wheel", (e) => {
+  // molette sur toute la scène, noms des muscles compris (sinon un nom passé sous la souris bloque le zoom) ;
+  // la carte d'explication et les boutons gardent leur comportement normal
+  sceneEl.addEventListener("wheel", (e) => {
+    if (e.target.closest(".carte-choix, .boutons-scene")) return;
     e.preventDefault();
     animCam = null;
     cam.dist = Math.max(0.03, Math.min(rayonScene * 8, cam.dist * Math.exp(e.deltaY * 0.0012)));

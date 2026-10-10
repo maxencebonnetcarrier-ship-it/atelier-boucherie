@@ -9,7 +9,8 @@ const APP = process.env.APP_DIR || join(dirname(dirname(fileURLToPath(import.met
 const ctx = { window: {} };
 vm.createContext(ctx);
 for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js",
-  "data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js"]) {
+  "data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js", "data/atelier-aloyau.js",
+  "data/atelier-avant.js", "data/atelier-flanc.js"]) {
   vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx, { filename: f });
 }
 const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D, OS, CLASSEUR, ANATOMIE, ATELIER, ATELIER_MAILLAGES } = ctx.window;
@@ -196,6 +197,7 @@ else {
       }
     }
     for (const o of R.os) if (osMesh.get(o)?.region !== r) err(`atelier : os ${o} de la région ${r} sans forme 3D détaillée`);
+    for (const o of R.fendus || []) if (!R.os.includes(o)) err(`atelier : os fendu ${o} hors de la région ${r}`);
     // onglets de la région : chaque adresse mène à une vue qui existe
     for (const [, h] of R.vues) {
       const q = new URLSearchParams(h.replace(/^\?/, ""));
@@ -217,7 +219,8 @@ else {
   }
   for (const [id, o] of Object.entries(ATELIER.os)) {
     if (!osMesh.has(id)) err(`atelier : os ${id} sans forme 3D détaillée`);
-    if (!OS.boeuf.some((b) => b.id === id)) err(`atelier : os ${id} inconnu de l'appli`);
+    // un os pris en partie dans une région (vertèbres du garrot, panneau de côtes) renvoie à la fiche de l'appli
+    if (!OS.boeuf.some((b) => b.id === (o.appli || id))) err(`atelier : os ${id} inconnu de l'appli`);
     for (const m of o.muscles) {
       if (!ATELIER.muscles[m]) err(`atelier : os ${id} -> muscle inconnu ${m}`);
       else if (osMesh.has(id) && mesh.get(m)?.region !== osMesh.get(id).region) err(`atelier : os ${id} -> muscle ${m} d'une autre région`);

@@ -14,7 +14,7 @@ const CAPTURES = join(RACINE, "outils", "captures");
 const BASE = (process.argv[2] || pathToFileURL(APP).href).replace(/\/?$/, "/");
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
+for (const f of ["data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js", "data/atelier-aloyau.js", "data/atelier-avant.js", "data/atelier-flanc.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
 const { ATELIER, ATELIER_MAILLAGES } = ctx.window;
 const R = ATELIER.regions.cuisse;
 
@@ -143,6 +143,18 @@ try {
   await attendre(200);
   const zoom = await lire("window.ATELIER3D.orientation()");
   if (!(zoom.dist < avant.dist * 0.2)) erreurs.push(`molette : on ne s'approche pas assez (${avant.dist.toFixed(2)} → ${zoom.dist.toFixed(2)} m)`);
+  // la molette zoome aussi quand la souris est sur le nom d'un muscle
+  await lire("document.getElementById('b-recadrer').click()");
+  await immobile();
+  const surNom = await lire("(() => { const e = [...document.querySelectorAll('.etiquettes-atelier .et')].find((el) => el.style.visibility === 'visible'); if (!e) return null; const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()");
+  if (!surNom) erreurs.push("molette : aucun nom visible pour l'essai");
+  else {
+    const d0 = await lire("window.ATELIER3D.orientation().dist");
+    for (let i = 0; i < 5; i++) await nav.cdp("Input.dispatchMouseEvent", { type: "mouseWheel", x: surNom[0], y: surNom[1], deltaX: 0, deltaY: -240 });
+    await attendre(200);
+    const d1 = await lire("window.ATELIER3D.orientation().dist");
+    if (!(d1 < d0 * 0.4)) erreurs.push(`molette sur un nom de muscle : pas de zoom (${d0.toFixed(2)} → ${d1.toFixed(2)} m)`);
+  }
   await nav.glisser(400, 500, 650, 520);
   const tour = await lire("window.ATELIER3D.orientation()");
   if (Math.abs(tour.az - zoom.az) < 0.5) erreurs.push("glisser : la vue ne tourne pas");
@@ -211,6 +223,50 @@ try {
   if (!nerf?.courant || !nerf.visible) erreurs.push("paleron : le nerf central n'est pas mis en avant");
   await nav.capture(join(CAPTURES, "atelier-12-paleron-nerf.png"));
 
+  // 3 ter. l'aloyau et le train de côtes : région entière, vertèbres des reins et leurs repères, filet démonté
+  await regionEntiere("aloyau", 13);
+  await ouvrir("?os=lombaires");
+  const repsL = await lire("window.ATELIER3D.reperes()");
+  const attendusL = ATELIER_MAILLAGES.aloyau.reperes.lombaires.map((r) => r.id);
+  if (repsL.join() !== attendusL.join()) erreurs.push(`lombaires : repères ${repsL} au lieu de ${attendusL}`);
+  await lire(`document.querySelector('[data-repere="${attendusL.indexOf("l-processus-transversus")}"]').click()`);
+  await attendre(800);
+  const [selL, carteL] = await lire("[window.ATELIER3D.selection(), window.ATELIER3D.carte()]");
+  if (!selL || selL.repere !== "l-processus-transversus" || !carteL.includes("étagère") || !carteL.includes("IMAIOS")) erreurs.push(`lombaires : repère apophyse transverse ${JSON.stringify(selL)} « ${(carteL || "").slice(0, 60)} »`);
+  await nav.capture(join(CAPTURES, "atelier-16-lombaires.png"));
+  await ouvrir("?region=aloyau&piece=filet");
+  const RA = ATELIER.regions.aloyau;
+  const fil = (await lire("window.ATELIER3D.objets()")).filter((x) => x.type === "muscle").map((x) => x.id).sort();
+  if (fil.join() !== [...RA.pieces.filet].sort().join()) erreurs.push(`filet : muscles ${fil}`);
+  await lire(`document.querySelector('[data-etape="${RA.etapesPieces.filet.length - 1}"]').click()`);
+  await attendre(1200);
+  const objsF = await lire("window.ATELIER3D.objets()");
+  for (const m of ["fi-chainette", "fi-aile", "fi-queue", "fi-tete"]) if (!objsF.find((x) => x.id === m)?.leve) erreurs.push(`filet : ${m} n'est pas posé à côté avant de couper le cœur`);
+  await nav.capture(join(CAPTURES, "atelier-17-filet.png"));
+
+  // 3 quater. l'avant : région entière, sternum et ses repères
+  await regionEntiere("avant", 18);
+  await ouvrir("?os=sternum");
+  const repsS = await lire("window.ATELIER3D.reperes()");
+  const attendusS = ATELIER_MAILLAGES.avant.reperes.sternum.map((r) => r.id);
+  if (repsS.join() !== attendusS.join()) erreurs.push(`sternum : repères ${repsS} au lieu de ${attendusS}`);
+  await lire(`document.querySelector('[data-repere="${attendusS.indexOf("processus-xiphoideus")}"]').click()`);
+  await attendre(800);
+  const [selS, carteS] = await lire("[window.ATELIER3D.selection(), window.ATELIER3D.carte()]");
+  if (!selS || selS.repere !== "processus-xiphoideus" || !carteS.includes("Processus xiphoideus")) erreurs.push(`sternum : repère appendice xiphoïde ${JSON.stringify(selS)} « ${(carteS || "").slice(0, 60)} »`);
+  await nav.capture(join(CAPTURES, "atelier-21-sternum.png"));
+
+  // 3 quinquies. le flanc : région entière, onglet ouvert sur son nerf central
+  await regionEntiere("flanc", 22);
+  await ouvrir("?region=flanc&piece=onglet");
+  const RF = ATELIER.regions.flanc;
+  await lire(`document.querySelector('[data-etape="1"]').click()`);
+  await attendre(1200);
+  const objsO = await lire("window.ATELIER3D.objets()");
+  if (!objsO.find((x) => x.id === "on-avant")?.leve || !objsO.find((x) => x.id === "on-nerf")?.courant) erreurs.push("onglet : le nerf central n'est pas mis en avant une fois le premier muscle séparé");
+  if ((await lire("document.querySelectorAll('#etapes li').length")) !== RF.etapesPieces.onglet.length) erreurs.push("onglet : étapes de séparation incomplètes");
+  await nav.capture(join(CAPTURES, "atelier-25-onglet.png"));
+
   // 4. téléphone : la page tient en largeur, toucher un muscle le choisit
   await nav.taille(390, 844, true, 2);
   await ouvrir("?region=cuisse&piece=rumsteck");
@@ -241,7 +297,7 @@ try {
   await nav.aller(BASE + "index.html#boeuf/squelette", "document.readyState === 'complete' && !!window.ATELIER3D");
   await attendre(600);
   const liens = await lire("[...document.querySelectorAll('#liste-pieces a')].map((a) => a.getAttribute('href'))");
-  for (const h of ["atelier.html?region=cuisse", "atelier.html?os=coxal", "atelier.html?region=epaule", "atelier.html?os=palette"]) {
+  for (const h of ["atelier.html?region=cuisse", "atelier.html?os=coxal", "atelier.html?region=epaule", "atelier.html?os=palette", "atelier.html?region=aloyau", "atelier.html?region=avant", "atelier.html?region=flanc"]) {
     if (!liens.includes(h)) erreurs.push(`appli : lien ${h} absent de la liste des os (${liens})`);
   }
   await lire("location.hash = '#boeuf/squelette/coxal'");
@@ -256,6 +312,9 @@ try {
   await lire("location.hash = '#boeuf/paleron'");
   await attendre(700);
   if (!(await lire(`!!document.querySelector('#panneau a[href="atelier.html?region=epaule&piece=paleron"]')`))) erreurs.push("appli : la fiche paleron n'ouvre pas ses muscles en 3D");
+  await lire("location.hash = '#boeuf/filet'");
+  await attendre(700);
+  if (!(await lire(`!!document.querySelector('#panneau a[href="atelier.html?region=aloyau&piece=filet"]')`))) erreurs.push("appli : la fiche filet n'ouvre pas ses muscles en 3D");
   await lire("location.hash = '#boeuf/squelette/palette'");
   await attendre(900);
   if (!(await lire("!!document.querySelector('#panneau a[href=\"atelier.html?os=palette\"]')"))) erreurs.push("appli : la fiche de la palette n'ouvre pas l'atelier");
@@ -277,4 +336,4 @@ if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — atelier : ${clics} muscles de la cuisse et de l'épaule cliqués en 3D (carte « comment le séparer »), séparation, ${R.etapes.length} + ${ATELIER.regions.epaule.etapes.length} étapes, zoom, rotation, os du bassin et palette (repères, muscles autour), tranche grasse, paleron ouvert sur son nerf, téléphone (toucher, pincer) et liens depuis l'appli vérifiés. Captures : outils/captures/atelier-*.png`);
+console.log(`OK — atelier : ${clics} muscles des 5 régions (cuisse, épaule, aloyau, avant, flanc) cliqués en 3D (carte « comment le séparer »), séparation, ${Object.values(ATELIER.regions).map((r) => r.etapes.length).join(" + ")} étapes, zoom, rotation, os du bassin, palette, vertèbres des reins et sternum (repères, muscles autour), tranche grasse, paleron ouvert sur son nerf, filet démonté, onglet ouvert sur son nerf, téléphone (toucher, pincer) et liens depuis l'appli vérifiés. Captures : outils/captures/atelier-*.png`);

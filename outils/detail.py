@@ -3,6 +3,9 @@
 #   python outils/detail.py [cuisse]          -> app/data/atelier-cuisse.js (maillages fins des muscles, du gras
 #                                                de couverture et des os de la cuisse, repères nommés des os)
 #   python outils/detail.py epaule            -> app/data/atelier-epaule.js (même chose pour l'épaule)
+#   python outils/detail.py aloyau            -> app/data/atelier-aloyau.js (aloyau et train de côtes)
+#   python outils/detail.py avant             -> app/data/atelier-avant.js (collier, basses côtes, poitrine)
+#   python outils/detail.py flanc             -> app/data/atelier-flanc.js (flanchet, bavettes, onglet, hampe)
 #   ... --vite                                -> réutilise l'étiquetage en cache (outils/cache/<région>_lab.npz)
 #
 # 1. La cuisse et la croupe sont étiquetées comme dans outils/viande.py, mais sur une grille plus fine
@@ -33,7 +36,10 @@ PAS = 0.004
 # Boîte de calcul de chaque région (m) : assez large pour que les morceaux voisins (collier, basses côtes,
 # poitrine…) grandissent aussi et bornent la région.
 BOITES = {"cuisse": ((0.0, 0.40, 0.0), (1.13, 1.50, 0.45)),
-          "epaule": ((-1.04, 0.42, 0.0), (-0.27, 1.52, 0.45))}
+          "epaule": ((-1.04, 0.42, 0.0), (-0.27, 1.52, 0.45)),
+          "aloyau": ((-0.46, 0.95, 0.0), (0.80, 1.53, 0.38)),
+          "avant": ((-1.27, 0.52, 0.0), (0.10, 1.56, 0.45)),
+          "flanc": ((-0.22, 0.50, 0.0), (0.80, 1.36, 0.45))}
 BOITE = BOITES["cuisse"]
 
 # Pièces de la cuisse (et de la croupe) ; os de la région ; résolution des os (triangles).
@@ -289,11 +295,14 @@ def surfaces(e, sous, noms, gras_id=GRAS, ep_fn=None, fins=None):
 
 
 # ---------------------------------------------------------------- os en haute définition et repères
-def os_hd(liste=None):
+def os_hd(liste=None, formes_en_plus=None):
+    """Os en haute définition ; formes_en_plus = {id: (fonction, pair)} pour un os pris en partie (les
+    vertèbres et les côtes de l'aloyau)."""
     import anatomie
     import squelette as sq
     out = []
     formes = {oid: (fn, pair) for oid, fn, pair, _, _ in sq.OS_BOEUF}
+    formes.update(formes_en_plus or {})
     for oid, cible in (liste or OS_HD).items():
         fn, pair = formes[oid]
         cle = os.path.join(CACHE, "anatomie", f"hd-{oid}.npz")
@@ -359,7 +368,7 @@ def reperes():
 
 def main(args):
     t = time.time()
-    region = "epaule" if "epaule" in args else "cuisse"
+    region = next((a for a in args if a in BOITES), "cuisse")
     e = etiquetage(vite="--vite" in args, region=region)
     print(f"   étiquetage : {time.time() - t:.0f} s", flush=True)
     if region == "cuisse":
@@ -369,6 +378,30 @@ def main(args):
         os_ = os_hd()
         rep_ = reperes()
         texte = "La cuisse du bœuf en détail (côté gauche)"
+    elif region == "flanc":
+        from flanc import decouper_flanc, reperes_flanc, epaisseur_gras_flanc, GRAS_FLANC, OS_HD_FLANC, FORMES_OS
+        sous, noms, fins = decouper_flanc(e)
+        print(f"   découpage : {time.time() - t:.0f} s", flush=True)
+        muscles = surfaces(e, sous, noms, gras_id=GRAS_FLANC, ep_fn=epaisseur_gras_flanc, fins=fins)
+        os_ = os_hd(OS_HD_FLANC, FORMES_OS)
+        rep_ = reperes_flanc()
+        texte = "Le flanchet, les bavettes, l'onglet et la hampe du bœuf en détail (côté gauche)"
+    elif region == "avant":
+        from avant import decouper_avant, reperes_avant, epaisseur_gras_avant, GRAS_AVANT, OS_HD_AVANT, FORMES_OS
+        sous, noms, fins = decouper_avant(e)
+        print(f"   découpage : {time.time() - t:.0f} s", flush=True)
+        muscles = surfaces(e, sous, noms, gras_id=GRAS_AVANT, ep_fn=epaisseur_gras_avant, fins=fins)
+        os_ = os_hd(OS_HD_AVANT, FORMES_OS)
+        rep_ = reperes_avant()
+        texte = "Le collier, les basses côtes et la poitrine du bœuf en détail (côté gauche)"
+    elif region == "aloyau":
+        from aloyau import decouper_aloyau, reperes_aloyau, epaisseur_gras_aloyau, GRAS_ALOYAU, OS_HD_ALOYAU, FORMES_OS
+        sous, noms, fins = decouper_aloyau(e)
+        print(f"   découpage : {time.time() - t:.0f} s", flush=True)
+        muscles = surfaces(e, sous, noms, gras_id=GRAS_ALOYAU, ep_fn=epaisseur_gras_aloyau, fins=fins)
+        os_ = os_hd(OS_HD_ALOYAU, FORMES_OS)
+        rep_ = reperes_aloyau()
+        texte = "L'aloyau et le train de côtes du bœuf en détail (côté gauche)"
     else:
         from epaule import decouper_epaule, reperes_epaule, epaisseur_gras_epaule, GRAS_EPAULE, OS_HD_EPAULE
         sous, noms, fins = decouper_epaule(e)

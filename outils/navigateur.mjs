@@ -77,8 +77,13 @@ export async function lancer({ largeur = 1400, hauteur = 1000, port = 9337 } = {
       throw new Error("la page ne se charge pas : " + url);
     },
     async cliquer(x, y) {
+      // Un clic humain : le bouton relâché 60 ms après l'appui. L'heure de chaque geste est fixée ici, comme le fait
+      // un vrai écran ou une vraie souris. Sinon le navigateur date le relâchement à sa réception, qui attend la fin
+      // de l'image en cours (lente sans carte graphique) : un clic devenait un « appui long » de 2 s et était ignoré.
+      const t0 = Date.now() / 1000;
+      const heure = { mouseMoved: t0, mousePressed: t0, mouseReleased: t0 + 0.06 };
       for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
-        await cdp("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: type === "mouseMoved" ? 0 : 1 });
+        await cdp("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: type === "mouseMoved" ? 0 : 1, timestamp: heure[type] });
       }
       await attendre(80);
     },

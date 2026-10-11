@@ -344,7 +344,13 @@ try {
   const ptL = await lire(`(() => { const r = document.querySelector('#muscles [data-objet="jumeau-a-bifteck"] span:nth-of-type(2)').getBoundingClientRect(); return [r.left + 10, r.top + r.height / 2]; })()`);
   await nav.cdp("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: ptL[0], y: ptL[1] }] });
   await nav.cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  await attendre(1500);
+  // la page remonte jusqu'à la 3D en défilement doux. Sans carte graphique, chaque image du navigateur de test
+  // est lente : le défilement arrive en 1,8 à 3,6 s (mesuré le 11 octobre 2026), au lieu d'une fraction de
+  // seconde sur un téléphone. On attend donc que la 3D soit à l'écran, 10 s au plus ; l'exigence reste la même.
+  for (let i = 0; i < 100; i++) {
+    if (await lire("(() => { const r = document.getElementById('scene').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()")) break;
+    await attendre(100);
+  }
   const [selJ, hautJ, basJ] = await lire("(() => { const r = document.getElementById('scene').getBoundingClientRect(); return [window.ATELIER3D.selection(), Math.round(r.top), Math.round(r.bottom - innerHeight)]; })()");
   if (!selJ || selJ.id !== "jumeau-a-bifteck") erreurs.push(`téléphone : toucher le jumeau dans la liste → ${JSON.stringify(selJ)}`);
   if (hautJ < 0 || basJ > 0) erreurs.push(`téléphone : après le jumeau choisi dans la liste, la 3D n'est pas à l'écran (haut ${hautJ} px, dépasse en bas de ${basJ} px)`);

@@ -446,7 +446,7 @@
     toile.setPointerCapture(e.pointerId);
     animCam = null;
     if (pointeurs.size === 1) {
-      appui = { x: e.clientX, y: e.clientY, t: performance.now(), az: cam.az, el: cam.el, glisse: false,
+      appui = { x: e.clientX, y: e.clientY, t: e.timeStamp, az: cam.az, el: cam.el, glisse: false,
         deplacer: e.button === 2 || e.button === 1 || e.shiftKey, dernier: { x: e.clientX, y: e.clientY } };
     } else if (pointeurs.size === 2) {
       const [a, b] = [...pointeurs.values()];
@@ -502,7 +502,9 @@
       if (r && appui) Object.assign(appui, { x: r.x, y: r.y, az: cam.az, el: cam.el, glisse: true, dernier: { ...r } });
     }
     if (!appui || pointeurs.size) return;
-    const clic = !appui.glisse && performance.now() - appui.t < 700 && e.type === "pointerup";
+    // durée de l'appui mesurée sur l'heure des gestes eux-mêmes (e.timeStamp), pas sur l'heure où la page les
+    // traite : une image lente à dessiner entre l'appui et le relâchement ne transforme pas un clic en appui long
+    const clic = !appui.glisse && e.timeStamp - appui.t < 700 && e.type === "pointerup";
     appui = null;
     if (!clic) return;
     const maintenant = performance.now();

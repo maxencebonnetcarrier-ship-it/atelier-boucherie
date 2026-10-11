@@ -191,6 +191,25 @@ try {
 
   // 3 bis. l'épaule entière, la palette et ses repères, le paleron ouvert en deux
   await regionEntiere("epaule", 8);
+  // un clic reste un clic même si la page est occupée entre l'appui et le relâchement (une image lente à
+  // dessiner) ; un vrai appui long (1 s) n'en est toujours pas un. Avant la correction, le premier cas perdait
+  // le clic : la sélection restait sur le muscle d'avant (vu sur le site en ligne, 11 octobre 2026).
+  await ouvrir("?region=epaule");
+  await lire(`document.querySelector('[data-voir="gras"]').click()`);
+  await immobile();
+  for (const [id, occupe, attendu] of [["pal-derriere", 0, "pal-derriere"], ["dp-surprise", 1200, "dp-surprise"], ["dp-merlan", -1000, "dp-surprise"]]) {
+    const p = await lire(`window.ATELIER3D.pointEcran(${JSON.stringify(id)})`);
+    await immobile();
+    if (!p) { erreurs.push(`clic page occupée : aucun point visible pour ${id}`); continue; }
+    await nav.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: p[0], y: p[1] });
+    await nav.cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: p[0], y: p[1], button: "left", clickCount: 1 });
+    if (occupe > 0) nav.cdp("Runtime.evaluate", { expression: `{ const t = performance.now(); while (performance.now() - t < ${occupe}); }` });
+    if (occupe < 0) await attendre(-occupe);
+    await nav.cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: p[0], y: p[1], button: "left", clickCount: 1 });
+    await attendre(500);
+    const sel = (await lire("window.ATELIER3D.selection()"))?.id;
+    if (sel !== attendu) erreurs.push(`${occupe > 0 ? "clic pendant que la page est occupée" : occupe < 0 ? "appui long de 1 s" : "clic"} sur ${id} : choisi ${sel} au lieu de ${attendu}`);
+  }
   await ouvrir("?os=palette");
   const repsP = await lire("window.ATELIER3D.reperes()");
   const attendusP = ATELIER_MAILLAGES.epaule.reperes.palette.map((r) => r.id);

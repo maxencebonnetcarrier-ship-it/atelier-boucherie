@@ -7,7 +7,13 @@
   const CLASSEUR = window.CLASSEUR || null;
   // Page atelier 3D (atelier.html) : os et pièces qui y ont une vue détaillée (bœuf seulement).
   const ATELIER = window.ATELIER || null;
-  const lienAtelierOs = (animal, id) => animal === "boeuf" && ATELIER && ATELIER.os[id] ? `atelier.html?os=${encodeURIComponent(id)}` : null;
+  // page atelier d'un os : identifiant tel quel pour le bœuf, préfixé par l'animal pour les autres (porc-femur…)
+  const lienAtelierOs = (animal, id) => {
+    const aid = animal === "boeuf" ? id : `${animal}-${id}`;
+    return ATELIER && ATELIER.os[aid] ? `atelier.html?os=${encodeURIComponent(aid)}` : null;
+  };
+  // un animal dont le squelette n'a pas encore de muscles en volume (porc) : ni bouton « Muscles », ni légende de viande
+  const aMuscles = (animal) => !!(window.ANATOMIE && window.ANATOMIE[animal] && (window.ANATOMIE[animal].muscles || []).length);
   const regionAtelier = (id) => ATELIER && Object.keys(ATELIER.regions).find((r) => ATELIER.regions[r].pieces[id]);
   const lienAtelierPiece = (animal, id) => animal === "boeuf" && regionAtelier(id) ? `atelier.html?region=${regionAtelier(id)}&piece=${encodeURIComponent(id)}` : null;
   const RAPIDES = ["griller", "poeler", "rotir", "sauter", "cru"];
@@ -173,10 +179,11 @@
       window.ATELIER3D = vue3d; // accès pour les tests automatiques
     }
     vue3d.afficher(etat.animal, Object.fromEntries(PIECES[etat.animal].map((p) => [p.id, nomCourt(p)])));
-    // Le squelette réaliste et les muscles (data/anatomie.js, ~2,5 Mo) ne sont chargés qu'à la première ouverture.
+    // Le squelette réaliste (data/anatomie.js pour le bœuf, avec ses muscles ; data/anatomie-<animal>.js pour les
+    // autres) n'est chargé qu'à la première ouverture du squelette de cet animal.
     if (etat.squelette && OS[etat.animal] && !vue3d.anatomiePrete(etat.animal) && !etat.chargement && !etat.erreurAnatomie) {
       etat.chargement = true;
-      vue3d.chargerAnatomie()
+      vue3d.chargerAnatomie(etat.animal)
         .then(() => { etat.chargement = false; rendre(); })
         .catch((e) => { etat.chargement = false; etat.erreurAnatomie = e.message; rendre(); });
     }
@@ -242,10 +249,10 @@
     carte.hidden = false;
     carte.innerHTML = `
       <div class="titre"><b>${esc(os.nom)}</b> <small>${esc(os.savant)}</small></div>
-      ${pieces.length ? `<div class="muscles-lies">Muscles posés dessus : ${pieces.map((p) => `<a href="#${etat.animal}/${p.id}">${esc(nomCourt(p))}</a>`).join(" · ")}</div>`
+      ${pieces.length ? `<div class="muscles-lies">${aMuscles(etat.animal) ? "Muscles posés" : "Pièces posées"} dessus : ${pieces.map((p) => `<a href="#${etat.animal}/${p.id}">${esc(nomCourt(p))}</a>`).join(" · ")}</div>`
         : `<div class="muscles-lies">Aucune pièce de la planche n’est posée sur cet os.</div>`}
       <div class="actions">
-        <button type="button" data-voir="muscles" aria-pressed="${etat.muscles}">Muscles</button>
+        ${aMuscles(etat.animal) ? `<button type="button" data-voir="muscles" aria-pressed="${etat.muscles}">Muscles</button>` : ""}
         <button type="button" data-voir="autres" aria-pressed="${etat.autresOs}">Autres os</button>
         <button type="button" data-fiche>Fiche ↓</button>
         ${lienAtelierOs(etat.animal, os.id) ? `<a class="bouton-lien" href="${lienAtelierOs(etat.animal, os.id)}">En grand ↗</a>` : ""}
@@ -263,7 +270,7 @@
     be.hidden = !etat.squelette;
     be.setAttribute("aria-pressed", String(etat.eclate));
     be.textContent = etat.eclate ? "Rassembler" : "Éclater";
-    bm.hidden = !etat.squelette;
+    bm.hidden = !etat.squelette || !aMuscles(etat.animal);
     bm.setAttribute("aria-pressed", String(etat.viande));
     const bp = document.querySelector("#outils3d [data-plein]");
     const plein = document.body.classList.contains("plein-ecran-3d");
@@ -281,9 +288,9 @@
         + `<span class="pastille" style="--c:#ecdfc4">os</span>`
         + `<span class="pastille" style="--c:#bcd6dc">cartilage</span>`
         + `<span class="pastille" style="--c:#f3c45a">os choisi</span>`
-        + `<span class="pastille" style="--c:${TEINTE_FAMILLE.rapide}">muscle à cuisson rapide</span>`
+        + (aMuscles(etat.animal) ? `<span class="pastille" style="--c:${TEINTE_FAMILLE.rapide}">muscle à cuisson rapide</span>`
         + `<span class="pastille" style="--c:${TEINTE_FAMILLE.lente}">muscle à cuisson lente</span>`
-        + `<span class="pastille" style="--c:${TEINTE_FAMILLE.mixte}">rapide ou lente</span>`;
+        + `<span class="pastille" style="--c:${TEINTE_FAMILLE.mixte}">rapide ou lente</span>` : "");
       return;
     }
     const presentes = [...new Set(PIECES[etat.animal].map(famille))];
@@ -320,9 +327,12 @@
         ? `<h2>Atelier 3D</h2><div class="grille"><a class="bouton-lien" href="atelier.html?region=cuisse">Cuisse entière : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=coxal">Os du bassin et ses repères ↗</a><a class="bouton-lien" href="atelier.html?region=epaule">Épaule entière : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=palette">Palette (omoplate) et ses repères ↗</a><a class="bouton-lien" href="atelier.html?region=aloyau">Aloyau et train de côtes : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=lombaires">Vertèbres des reins et leurs repères ↗</a><a class="bouton-lien" href="atelier.html?region=avant">Collier, basses côtes et poitrine : tous les muscles, séparés ↗</a><a class="bouton-lien" href="atelier.html?os=sternum">Sternum et ses repères ↗</a><a class="bouton-lien" href="atelier.html?region=flanc">Flanchet, bavettes, onglet et hampe ↗</a></div>` : "";
       // le parcours guidé en premier : désosser une région une étape à la fois
       const pas = etat.animal === "boeuf" && ATELIER
-        ? `<h2>Désosser pas à pas</h2><div class="grille">${Object.entries(ATELIER.regions).map(([r, R]) =>
+        ? `<h2>Désosser pas à pas</h2><div class="grille">${Object.entries(ATELIER.regions).filter(([, R]) => (R.animal || "boeuf") === "boeuf").map(([r, R]) =>
           `<a class="bouton-lien" href="atelier.html?region=${r}&pas=1">${esc(R.court)} ▶</a>`).join("")}</div>` : "";
-      liste.innerHTML = pas + regions + `<h2>Tous les os (${tous.length})</h2>` + groupes.map((g) => `<h2 class="sous">${esc(g)}</h2><div class="grille">`
+      // autre animal : son squelette entier en grand (page atelier), chaque os y a sa page
+      const squeletteAtelier = etat.animal !== "boeuf" && ATELIER && ATELIER.regions[etat.animal]
+        ? `<h2>Atelier 3D</h2><div class="grille"><a class="bouton-lien" href="atelier.html?region=${etat.animal}">${esc(ATELIER.regions[etat.animal].nom)} : chaque os en grand ↗</a></div>` : "";
+      liste.innerHTML = pas + regions + squeletteAtelier + `<h2>Tous les os (${tous.length})</h2>` + groupes.map((g) => `<h2 class="sous">${esc(g)}</h2><div class="grille">`
         + tous.filter((o) => o.groupe === g).map((o) =>
           `<button type="button" class="${o.id === etat.os ? "active" : ""}" data-os="${o.id}">${esc(o.nom)}</button>`).join("")
         + `</div>`).join("");
@@ -396,10 +406,13 @@
       <p>Le corps devient transparent : les os apparaissent à leur place. Chaque pièce de viande repose sur un os ; désosser, c’est suivre l’os.</p>
       <div class="pas">
         <div><b>1</b><span>Touche un os : la vue plonge dessus. Tourne autour, zoome, déplace-toi pour voir sa forme sous tous les angles.</span></div>
-        <div><b>2</b><span>Les muscles posés sur l’os apparaissent autour de lui, avec leur nom ; touche un muscle pour ouvrir sa fiche.</span></div>
-        <div><b>3</b><span>« Muscles » montre toute la viande sur le squelette ; « Éclater » écarte les os les uns des autres.</span></div>
+        ${aMuscles(etat.animal) ? `<div><b>2</b><span>Les muscles posés sur l’os apparaissent autour de lui, avec leur nom ; touche un muscle pour ouvrir sa fiche.</span></div>
+        <div><b>3</b><span>« Muscles » montre toute la viande sur le squelette ; « Éclater » écarte les os les uns des autres.</span></div>`
+        : `<div><b>2</b><span>Sa fiche dit quelles pièces sont posées dessus et comment on le désosse ; « En grand » ouvre l’os seul, avec ses repères.</span></div>
+        <div><b>3</b><span>« Éclater » écarte les os les uns des autres, pour voir chacun en entier.</span></div>`}
       </div>
-      ${window.COMPTE_OS ? `<div class="classeur-os"><strong>Au classeur :</strong> ${esc(window.COMPTE_OS)}</div>` : ""}
+      ${etat.animal === "boeuf" && window.COMPTE_OS ? `<div class="classeur-os"><strong>Au classeur :</strong> ${esc(window.COMPTE_OS)}</div>`
+        : (window.COMPTE_OS_ANIMAL || {})[etat.animal] ? `<div class="classeur-os"><strong>À retenir :</strong> ${esc(window.COMPTE_OS_ANIMAL[etat.animal])}</div>` : ""}
       <p class="source">Os et muscles modélisés pour comprendre la structure : formes simplifiées, à valider avec ton formateur.</p>
     </div>`;
   }
@@ -412,13 +425,13 @@
       <p class="alias">${esc(o.savant)}</p>
       <p>${esc(o.savoir)}</p>
       <div class="conseil"><strong>Au désossage :</strong> ${esc(o.desossage)}</div>
-      ${lienAtelierOs(etat.animal, o.id) ? `<p class="lien-atelier"><a href="${lienAtelierOs(etat.animal, o.id)}">Voir cet os en grand : ses repères et les muscles posés dessus ↗</a></p>` : ""}
+      ${lienAtelierOs(etat.animal, o.id) ? `<p class="lien-atelier"><a href="${lienAtelierOs(etat.animal, o.id)}">Voir cet os en grand : ses repères${aMuscles(etat.animal) ? " et les muscles posés dessus" : ""} ↗</a></p>` : ""}
       ${o.classeur ? `<div class="classeur-os"><strong>Au classeur :</strong> ${esc(o.classeur)}</div>` : ""}
       ${o.mrs ? `<p class="note-mrs">⚠️ ${esc(window.REGLE_MRS)}</p>` : ""}
       <h3>Pièces posées sur cet os</h3>
       ${pieces.length ? `<ul class="transfo">${pieces.map((p) => `<li><a href="#${etat.animal}/${p.id}"><b>${esc(p.nom)}</b></a><span>${esc(typeCuisson(p).txt)}</span></li>`).join("")}</ul>`
         : `<p>Aucune pièce de ta planche ne repose sur cet os.</p>`}
-      <p class="source">Sources : fiche « Le squelette du bovin » (École des Métiers Bigard) ; tableau des pièces de bœuf (colonne OS) ; Wikipédia, « Désossage » ; classeur de découpe (tableaux « Le bœuf » n° 1 à 3, guide de découpe). Conseils à faire valider par ton formateur.</p>`;
+      <p class="source">${esc((window.SOURCES_OS || {})[etat.animal] || "Sources : fiche « Le squelette du bovin » (École des Métiers Bigard) ; tableau des pièces de bœuf (colonne OS) ; Wikipédia, « Désossage » ; classeur de découpe (tableaux « Le bœuf » n° 1 à 3, guide de découpe). Conseils à faire valider par ton formateur.")}</p>`;
   }
 
   // Étoiles du guide de découpe : ★ pleines + ☆ restantes (sur 3).

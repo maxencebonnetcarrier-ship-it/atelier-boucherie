@@ -17,7 +17,7 @@ const URL_APP = process.argv[2] || pathToFileURL(join(APP, "index.html")).href;
 // Données de référence (lues comme le fait la page).
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
+for (const f of ["data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js", "data/anatomie-porc.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
 const { ANIMAUX, PIECES, OS, CLASSEUR, ANATOMIE } = ctx.window;
 // muscles (en volume) de chaque pièce du bœuf
 const musclesDe = (pieces) => ANATOMIE.boeuf.muscles.filter((m) => m.pieces.some((p) => pieces.includes(p))).map((m) => m.id).sort();
@@ -206,6 +206,31 @@ try {
     const carte = await lire("(() => { const c = document.getElementById('carte3d'); return c && !c.hidden ? (c.querySelector('b')||{}).textContent : null; })()");
     if (carte !== o.nom) erreurs.push(`os ${o.id} : carte de la plongée « ${carte} »`);
   }
+  // 7 ter. Squelette du porc (les os seulement, data/anatomie-porc.js chargé à la demande) : chaque os se clique et
+  // ouvre sa fiche ; pas de bouton « Muscles » ; un seul os allumé pendant la plongée
+  await aller("#porc/squelette");
+  if (!(await attendreSquelette())) erreurs.push("squelette du porc : data/anatomie-porc.js ne se charge pas");
+  await attendre(600);
+  const [nbNomsP, boutonMuscles] = await lire("[window.ATELIER3D.osAffiches().length, getComputedStyle(document.querySelector('#outils3d [data-muscles]')).display]");
+  if (nbNomsP < 8) erreurs.push(`squelette du porc : ${nbNomsP} noms d'os affichés`);
+  if (boutonMuscles !== "none") erreurs.push("squelette du porc : bouton « Muscles » affiché alors que le porc n'a pas de muscles en 3D");
+  await nav.capture(join(CAPTURES, "11-porc-squelette.png"));
+  for (const o of OS.porc) {
+    await lire("location.hash = '#porc/squelette'");
+    await attendre(120);
+    const pt = await lire(`window.ATELIER3D.pointEcranOs(${JSON.stringify(o.id)})`);
+    if (!pt) { erreurs.push(`porc, os ${o.id} : aucun point visible`); continue; }
+    await nav.cliquer(pt[0], pt[1]);
+    clicsOs++;
+    await attendre(750);
+    const [h, titre, mode] = await lire("[location.hash, (document.querySelector('#panneau h2')||{}).textContent, window.ATELIER3D.modeCourant()]");
+    if (h !== `#porc/squelette/${o.id}` || titre !== o.nom || mode.os !== o.id) erreurs.push(`porc, os ${o.id} : clic → ${h} « ${titre} » (choisi : ${mode.os})`);
+    if (mode.osChoisisNets !== 1) erreurs.push(`porc, os ${o.id} : ${mode.osChoisisNets} os allumés pendant la plongée au lieu d'un seul`);
+    const carte = await lire("(() => { const c = document.getElementById('carte3d'); return c && !c.hidden ? c.innerText : null; })()");
+    if (!carte || !carte.includes(o.nom)) erreurs.push(`porc, os ${o.id} : carte de la plongée « ${(carte || "").slice(0, 60)} »`);
+    if (carte && /Muscles posés dessus/.test(carte)) erreurs.push(`porc, os ${o.id} : la carte parle de muscles qui n'existent pas en 3D`);
+  }
+  await allerOsCapture("#porc/squelette/crane", "12-porc-squelette-crane.png");
   await allerOsCapture("#boeuf/squelette/palette", "9-boeuf-squelette-palette.png");
   // un muscle touché pendant la plongée ouvre la fiche de sa pièce
   const ptMuscle = await lire(`window.ATELIER3D.pointEcranMuscle("paleron")`);
@@ -414,5 +439,5 @@ if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) sur ${clics} clics :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — ${clics} pièces et ${OS.boeuf.length} os cliqués en 3D, chacun ouvre la bonne fiche ; plongée sur chaque os avec ses muscles, clic sur un muscle, zoom et tour autour de l'os choisi, pincement, déplacement, vue par-dessous, toute la viande, plein écran, classeur, survol, rotation, liste, filtre, comparatif, vue éclatée et téléphone vérifiés. Captures : outils/captures/`);
+console.log(`OK — ${clics} pièces, ${OS.boeuf.length} os du bœuf et ${OS.porc.length} os du porc cliqués en 3D, chacun ouvre la bonne fiche ; plongée sur chaque os avec ses muscles, clic sur un muscle, zoom et tour autour de l'os choisi, pincement, déplacement, vue par-dessous, toute la viande, plein écran, classeur, survol, rotation, liste, filtre, comparatif, vue éclatée et téléphone vérifiés. Captures : outils/captures/`);
 process.exit(0);

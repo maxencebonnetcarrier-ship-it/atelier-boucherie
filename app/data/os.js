@@ -3,6 +3,9 @@
 // « Tableau des pièces de bœuf », colonne OS (http://www.ecomet.fr/tableau_des_pieces_de_beef.pdf)
 // et l'article « Désossage » de Wikipédia (https://fr.wikipedia.org/wiki/D%C3%A9sossage)
 // pour le lien os ↔ pièces. Les conseils « Au désossage » sont à faire valider par le formateur.
+// Porc : os d'après Sisson, « The Anatomy of the Domestic Animals » (1914), « Skeleton of the pig » ; os de chaque
+// grande coupe d'après le « Manuel des coupes de viande — Porc » de l'Agence canadienne d'inspection des aliments
+// (https://inspection.canada.ca/fr/etiquetage-aliments/etiquetage/industrie/produits-viande-volaille/coupes-viande/porc).
 // Chaque identifiant doit exister dans le modèle 3D (data/modeles3d.js, rubrique « os ») ;
 // outils/verifier.mjs le contrôle.
 
@@ -12,6 +15,17 @@ window.REGLE_MRS = "Selon l’âge de l’animal, la colonne vertébrale du bovi
 // Comptage par demi-carcasse (tableau « Le bœuf » n° 1, classeur de l’utilisateur).
 window.COMPTE_OS = "Par demi-carcasse, on compte 13 côtes et 31 demi-vertèbres (7 cervicales, 13 dorsales, 6 lombaires, 5 sacrées), "
   + "de la tête vers la queue.";
+
+// Pour les autres animaux : ce qu'il faut retenir du squelette (Sisson, « Skeleton of the pig ») et les sources des fiches.
+window.COMPTE_OS_ANIMAL = {
+  porc: "Le porc a 7 cervicales, 14 dorsales (parfois 15), 7 lombaires (parfois 6), 4 sacrées soudées et une vingtaine de "
+    + "coccygiennes ; 14 paires de côtes (13 à 16), dont 7 rejoignent le sternum ; 4 doigts à chaque pied (2 grands, 2 ergots).",
+};
+window.SOURCES_OS = {
+  porc: "Sources : Sisson, « The Anatomy of the Domestic Animals » (1914), « Skeleton of the pig » (forme et nombre des os) ; "
+    + "Cuyer, « The Artistic Anatomy of Animals » (1905), fig. 38 (squelette entier) ; Agence canadienne d’inspection des aliments, "
+    + "« Manuel des coupes de viande — Porc » (os de chaque grande coupe). Conseils à faire valider par ton formateur.",
+};
 
 window.OS = {
   boeuf: [
@@ -93,5 +107,75 @@ window.OS = {
       savoir: "Comme à l’avant : sous le jarret, des tendons et la peau, pas de pièce de boucherie.",
       desossage: "Il est séparé à l’articulation du jarret, avant la découpe.",
       pieces: [] },
+  ],
+  porc: [
+    { id: "crane", nom: "Tête", savant: "Crâne, mâchoire (mandibule) et os du groin (os rostral)", groupe: "Tête et colonne",
+      savoir: "Le crâne du porc est long, avec un chanfrein droit et une haute crête derrière (la nuque). Au bout du museau, un petit os en plus, l’os du groin, porte le groin. Les défenses sont les canines.",
+      desossage: "Les joues se lèvent en suivant la mâchoire ; le museau et les oreilles se prennent sur la peau de la tête.",
+      pieces: ["tete"] },
+    { id: "cervicales", nom: "Vertèbres du cou", savant: "7 vertèbres cervicales (la 1re est l’atlas, la 2e l’axis)", groupe: "Tête et colonne",
+      savoir: "Le cou du porc est court : 7 vertèbres courtes et larges. L’échine est posée dessus, avec le haut des premières côtes.",
+      desossage: "Pour une échine sans os, on suit les vertèbres du cou et le début du dos, puis on lève la viande des premières côtes.",
+      pieces: ["echine"] },
+    { id: "dorsales", nom: "Vertèbres du dos", savant: "14 vertèbres dorsales (thoraciques), parfois 15", groupe: "Tête et colonne",
+      savoir: "Chaque dorsale porte une paire de côtes. Leurs apophyses épineuses, longues devant puis plus courtes, sont dans le dos de la longe : l’échine devant, puis le carré de côtes.",
+      desossage: "Pour un carré ou des côtes sans os, on longe le corps des vertèbres, puis les épines, pour décoller la noix.",
+      pieces: ["echine", "carre-de-cotes", "cotes-de-filet"] },
+    { id: "lombaires", nom: "Vertèbres des reins", savant: "7 vertèbres lombaires, parfois 6", groupe: "Tête et colonne",
+      savoir: "Leurs longues apophyses transverses font une étagère : la noix des côtes de filet est posée dessus, le filet mignon est collé dessous.",
+      desossage: "On lève d’abord le filet mignon sous les vertèbres, puis la noix au-dessus, en suivant les apophyses.",
+      pieces: ["cotes-de-filet", "filet"] },
+    { id: "sacrum", nom: "Sacrum", savant: "4 vertèbres sacrées soudées", groupe: "Tête et colonne",
+      savoir: "Le sacrum est large et plat devant, où il s’appuie sur l’os du bassin. La pointe de filet est au-dessus, au bout de la longe, côté jambon.",
+      desossage: "On décolle la pointe de filet du sacrum et de l’aile de l’os du bassin.",
+      pieces: ["pointe-de-filet"] },
+    { id: "coccygiennes", nom: "Queue", savant: "20 à 23 vertèbres coccygiennes", groupe: "Tête et colonne",
+      savoir: "Une vingtaine de petites vertèbres, de plus en plus fines, dans la queue en vrille.",
+      desossage: "La queue se vend avec ses os, pour la potée.",
+      pieces: ["queue"] },
+    { id: "cotes", nom: "Côtes", savant: "14 paires de côtes (13 à 16), dont 7 sternales", groupe: "Cage thoracique",
+      savoir: "Le haut des côtes est dans la longe (échine, carré de côtes) ; le bas porte le plat de côtes, les travers et la poitrine. Les 7 premières côtes rejoignent le sternum par leur cartilage, les autres par celui de la côte d’avant.",
+      desossage: "On lève la poitrine en passant la lame au ras des côtes ; les travers gardent l’os et le cartilage.",
+      pieces: ["echine", "carre-de-cotes", "plat-de-cotes", "travers", "poitrine"] },
+    { id: "sternum", nom: "Sternum", savant: "6 sternèbres", groupe: "Cage thoracique",
+      savoir: "Le sternum ferme la cage thoracique par-dessous. Les cartilages des côtes s’y attachent ; les travers et la poitrine sont tout près.",
+      desossage: "On le retire avec les cartilages quand on désosse la poitrine.",
+      pieces: ["poitrine", "travers"] },
+    { id: "palette", nom: "Palette", savant: "Scapula (omoplate)", groupe: "Membre avant",
+      savoir: "Os plat et très large de l’épaule, partagé par une arête (l’épine), avec une grosse bosse au milieu. La palette (la pièce) est posée dessus.",
+      desossage: "On lève la viande de part et d’autre de l’arête, puis on décolle l’os.",
+      pieces: ["palette", "epaule"] },
+    { id: "humerus", nom: "Os de l’épaule", savant: "Humérus (os du bras)", groupe: "Membre avant",
+      savoir: "L’os du haut de la patte avant, sous la palette, dans l’épaule. C’est un os à moelle.",
+      desossage: "Une fois la palette retirée, on dégage l’humérus ; le jarret avant se sépare au bas de l’os.",
+      pieces: ["epaule"] },
+    { id: "radius", nom: "Os du jarret avant", savant: "Radius et cubitus (ulna)", groupe: "Membre avant",
+      savoir: "Le jarret avant entoure le radius (devant) et le cubitus (derrière). Le cubitus forme la pointe du coude.",
+      desossage: "On sépare le jarret de l’épaule au coude, et du pied au carpe.",
+      pieces: ["jarret-avant"] },
+    { id: "pied-avant", nom: "Pied avant", savant: "Carpe, 4 métacarpiens et phalanges", groupe: "Membre avant",
+      savoir: "Le pied du porc a 4 doigts : 2 grands, qui portent les onglons, et 2 petits derrière, les ergots. Presque pas de viande : des os, des tendons et de la peau.",
+      desossage: "Le pied se sépare du jarret au niveau du carpe ; il se vend avec ses os.",
+      pieces: ["pied"] },
+    { id: "coxal", nom: "Os du bassin", savant: "Coxal (ilium, ischium, pubis)", groupe: "Membre arrière",
+      savoir: "Long et étroit chez le porc. L’aile (l’ilium) est dans la pointe de filet ; le reste, avec le cotyle où tourne la tête du fémur, est dans le haut du jambon.",
+      desossage: "On sépare le jambon de la longe à travers l’ilium ; au désossage du jambon, on retire l’os du bassin en premier.",
+      pieces: ["jambon", "pointe-de-filet"] },
+    { id: "femur", nom: "Fémur", savant: "Fémur (os de la cuisse)", groupe: "Membre arrière",
+      savoir: "L’os du milieu du jambon, entouré par la noix, la sous-noix, la noix pâtissière et la pointe.",
+      desossage: "On dégage le fémur entre les muscles du jambon, en partant de la tête (côté bassin).",
+      pieces: ["jambon"] },
+    { id: "rotule", nom: "Rotule", savant: "Patella", groupe: "Membre arrière",
+      savoir: "Petit os long et étroit à l’avant du genou (le grasset), dans le jambon.",
+      desossage: "Elle vient avec la noix pâtissière ; on la retire au parage.",
+      pieces: ["jambon"] },
+    { id: "tibia", nom: "Os du jarret arrière", savant: "Tibia et péroné (fibula)", groupe: "Membre arrière",
+      savoir: "Le jarret arrière (le jambonneau) entoure le tibia et le péroné, plus fin, en dehors.",
+      desossage: "On sépare le jarret du jambon au milieu du tibia, ou au genou pour un jarret entier.",
+      pieces: ["jarret-arriere"] },
+    { id: "pied-arriere", nom: "Pied arrière", savant: "Tarse (calcanéum), 4 métatarsiens et phalanges", groupe: "Membre arrière",
+      savoir: "Comme à l’avant : 2 grands doigts et 2 ergots. Le calcanéum forme la pointe du jarret.",
+      desossage: "Le pied se sépare du jarret à l’articulation du tarse.",
+      pieces: ["pied"] },
   ],
 };

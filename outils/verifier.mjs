@@ -8,9 +8,9 @@ import vm from "node:vm";
 const APP = process.env.APP_DIR || join(dirname(dirname(fileURLToPath(import.meta.url))), "app");
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js",
+for (const f of ["data/modeles3d.js", "data/recettes.js", "data/pieces.js", "data/os.js", "data/classeur.js", "data/anatomie.js", "data/anatomie-porc.js",
   "data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js", "data/atelier-aloyau.js",
-  "data/atelier-avant.js", "data/atelier-flanc.js"]) {
+  "data/atelier-avant.js", "data/atelier-flanc.js", "data/atelier-porc.js"]) {
   vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx, { filename: f });
 }
 const { ANIMAUX, PIECES, CUISSONS, REGIONS, RECETTES, MODELES3D, OS, CLASSEUR, ANATOMIE, ATELIER, ATELIER_MAILLAGES } = ctx.window;
@@ -124,7 +124,8 @@ for (const [animal, liste] of Object.entries(OS || {})) {
     for (const k of ["nom", "savant", "savoir", "desossage", "groupe"]) if (!o[k]) err(`${ou}: champ ${k} vide`);
     for (const p of o.pieces) {
       if (!PIECES[animal].some((x) => x.id === p)) err(`${ou}: pièce inconnue « ${p} »`);
-      else if (!piecesMusclees.has(p)) err(`${ou}: la pièce « ${p} » posée sur l'os n'a pas de muscle en volume`);
+      // un animal dont le squelette n'a pas encore de muscles (porc : les os seulement) n'est pas concerné
+      else if (muscles.length && !piecesMusclees.has(p)) err(`${ou}: la pièce « ${p} » posée sur l'os n'a pas de muscle en volume`);
     }
   }
   for (const e of A.os) maillageValide(e, `${animal}/os ${e.id}`);
@@ -187,8 +188,9 @@ else {
   }
   for (const id of mesh.keys()) if (!ATELIER.muscles[id]) err(`atelier : forme 3D ${id} sans texte`);
   for (const [r, R] of Object.entries(ATELIER.regions)) {
-    if (!R.nom || !R.court || !R.gras || !R.vues?.length) err(`atelier : région ${r} incomplète (nom, nom court, gras, vues)`);
-    if (mesh.get(R.gras)?.region !== r) err(`atelier : région ${r} -> gras ${R.gras} absent de ses formes 3D`);
+    // une région « squelette » (le porc : les os seulement) n'a ni gras ni muscles
+    if (!R.nom || !R.court || (!R.gras && !R.squelette) || !R.vues?.length) err(`atelier : région ${r} incomplète (nom, nom court, gras, vues)`);
+    if (!R.squelette && mesh.get(R.gras)?.region !== r) err(`atelier : région ${r} -> gras ${R.gras} absent de ses formes 3D`);
     for (const [p, ids] of Object.entries(R.pieces)) {
       if (!piecesBoeuf.has(p)) err(`atelier : pièce inconnue ${p}`);
       for (const id of ids) {
@@ -215,12 +217,20 @@ else {
     }
     for (const p of Object.keys(R.etapesPieces)) if (!R.pieces[p]) err(`atelier : étapes pour une pièce hors de la région ${r} : ${p}`);
     const leves = new Set(R.etapes.flatMap((e) => e.muscles));
-    for (const id of [R.gras, ...Object.values(R.pieces).flat()]) if (!leves.has(id)) err(`atelier : ${id} n'est levé à aucune étape (${r})`);
+    for (const id of [R.gras, ...Object.values(R.pieces).flat()].filter(Boolean)) if (!leves.has(id)) err(`atelier : ${id} n'est levé à aucune étape (${r})`);
+    // squelette d'un animal : chaque os de ses fiches a sa page atelier, avec ses repères
+    if (R.squelette) {
+      for (const o of OS[R.animal] || []) {
+        const id = `${R.animal}-${o.id}`;
+        if (!R.os.includes(id)) err(`atelier : l'os ${o.id} du ${R.animal} n'a pas de page dans la région ${r}`);
+        else if ((ATELIER_MAILLAGES[r]?.reperes[id] || []).length < 2) err(`atelier : os ${id} : moins de 2 repères nommés`);
+      }
+    }
   }
   for (const [id, o] of Object.entries(ATELIER.os)) {
     if (!osMesh.has(id)) err(`atelier : os ${id} sans forme 3D détaillée`);
     // un os pris en partie dans une région (vertèbres du garrot, panneau de côtes) renvoie à la fiche de l'appli
-    if (!OS.boeuf.some((b) => b.id === (o.appli || id))) err(`atelier : os ${id} inconnu de l'appli`);
+    if (!(OS[o.animal || "boeuf"] || []).some((b) => b.id === (o.appli || id))) err(`atelier : os ${id} inconnu de l'appli`);
     for (const m of o.muscles) {
       if (!ATELIER.muscles[m]) err(`atelier : os ${id} -> muscle inconnu ${m}`);
       else if (osMesh.has(id) && mesh.get(m)?.region !== osMesh.get(id).region) err(`atelier : os ${id} -> muscle ${m} d'une autre région`);

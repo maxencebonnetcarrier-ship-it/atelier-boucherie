@@ -14,7 +14,8 @@ const CAPTURES = join(RACINE, "outils", "captures");
 const BASE = (process.argv[2] || pathToFileURL(APP).href).replace(/\/?$/, "/");
 const ctx = { window: {} };
 vm.createContext(ctx);
-for (const f of ["data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js", "data/atelier-aloyau.js", "data/atelier-avant.js", "data/atelier-flanc.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
+for (const f of ["data/atelier.js", "data/atelier-cuisse.js", "data/atelier-epaule.js", "data/atelier-aloyau.js", "data/atelier-avant.js", "data/atelier-flanc.js",
+  "data/atelier-porc.js"]) vm.runInContext(readFileSync(join(APP, f), "utf8"), ctx);
 const { ATELIER, ATELIER_MAILLAGES } = ctx.window;
 const R = ATELIER.regions.cuisse;
 
@@ -283,6 +284,67 @@ try {
   if ((await lire("document.querySelectorAll('#etapes li').length")) !== RF.etapesPieces.onglet.length) erreurs.push("onglet : étapes de séparation incomplètes");
   await nav.capture(join(CAPTURES, "atelier-25-onglet.png"));
 
+  // 3 septies. le squelette du porc (les os seulement) : les os des deux côtés ; un vrai clic sur chacun ouvre sa
+  // carte (un os de droite choisit son os de gauche) ; « Écarter les os » les éloigne ; chaque os a sa page et ses
+  // repères nommés ; pas de bloc « Muscles » vide ; le retour mène au squelette du porc dans l'appli
+  const RP = ATELIER.regions.porc;
+  const MP = ATELIER_MAILLAGES.porc;
+  await ouvrir("?region=porc");
+  const objsP = await lire("window.ATELIER3D.objets()");
+  const nbPairs = MP.os.filter((o) => o.pair).length;
+  if (objsP.length !== RP.os.length + nbPairs) erreurs.push(`porc : ${objsP.length} os en 3D au lieu de ${RP.os.length + nbPairs} (${RP.os.length} et le côté droit des ${nbPairs} os pairs)`);
+  // un squelette (os fins) remplit moins l'écran que des muscles : seuils mesurés le 19 octobre 2026 sur les pages
+  // équivalentes du bœuf (fémur seul 1 569 points, tibia 1 348, sternum 641) et du porc (squelette entier 1 697, sternum
+  // 721) ; une page sans os dessiné en donne 0
+  if ((await pixels()).plein < 1000) erreurs.push("porc : la scène est presque vide");
+  if (!(await lire("document.querySelector('#muscles').closest('.bloc').hidden"))) erreurs.push("porc : un bloc « Muscles » vide est affiché");
+  const retourP = await lire("document.getElementById('retour').getAttribute('href')");
+  if (retourP !== "index.html#porc/squelette") erreurs.push(`porc : le retour mène à ${retourP}`);
+  await nav.capture(join(CAPTURES, "atelier-34-porc-squelette.png"));
+  for (const id of RP.os) {
+    await immobile();
+    const pt = await lire(`window.ATELIER3D.pointEcran(${JSON.stringify(id)})`);
+    if (!pt) { erreurs.push(`porc : os ${id} : aucun point visible`); continue; }
+    await nav.cliquer(pt[0], pt[1]);
+    clics++;
+    await attendre(350);
+    const [sel, carte] = await lire("[window.ATELIER3D.selection(), window.ATELIER3D.carte()]");
+    if (!sel || sel.id !== id) erreurs.push(`porc : clic sur ${id} : choisi ${sel && sel.id}`);
+    if (!carte || !carte.includes(ATELIER.os[id].nom)) erreurs.push(`porc : clic sur ${id} : carte « ${(carte || "").slice(0, 50)} »`);
+  }
+  const droite = objsP.find((o) => o.id.endsWith("~d"));
+  if (droite) {
+    await immobile();
+    const pt = await lire(`window.ATELIER3D.pointEcran(${JSON.stringify(droite.id)})`);
+    if (pt) {
+      await nav.cliquer(pt[0], pt[1]);
+      await attendre(350);
+      const sel = await lire("window.ATELIER3D.selection()");
+      if (!sel || sel.id !== droite.id.replace("~d", "")) erreurs.push(`porc : clic sur l'os de droite ${droite.id} : choisi ${sel && sel.id}`);
+    } else erreurs.push(`porc : os de droite ${droite.id} : aucun point visible`);
+  }
+  await separerA(100);
+  await immobile();
+  const ecartes = (await lire("window.ATELIER3D.objets()")).filter((o) => o.decale > 0.02).length;
+  if (ecartes < RP.os.length) erreurs.push(`porc : « Écarter les os » n'écarte que ${ecartes} os`);
+  await nav.capture(join(CAPTURES, "atelier-35-porc-ecarte.png"));
+  for (const id of RP.os) {
+    await ouvrir(`?os=${id}`);
+    const reps = await lire("window.ATELIER3D.reperes()");
+    const attendus = (MP.reperes[id] || []).map((r) => r.id);
+    if (reps.join() !== attendus.join()) erreurs.push(`porc : ${id} : repères ${reps} au lieu de ${attendus}`);
+    const vus = (await lire("window.ATELIER3D.etiquettesVisibles()")).length;
+    if (vus < Math.min(2, attendus.length)) erreurs.push(`porc : ${id} : ${vus} noms de repères visibles`);
+    if ((await pixels()).plein < 400) erreurs.push(`porc : ${id} : l'os seul n'est presque pas dessiné`);
+    if (id === "porc-crane" || id === "porc-coxal") await nav.capture(join(CAPTURES, `atelier-36-${id}.png`));
+  }
+  await ouvrir("?os=porc-coxal");
+  const iAcet = MP.reperes["porc-coxal"].findIndex((r) => r.id === "porc-acetabulum");
+  await lire(`document.querySelector('[data-repere="${iAcet}"]').click()`);
+  await attendre(800);
+  const [selA, carteA] = await lire("[window.ATELIER3D.selection(), window.ATELIER3D.carte()]");
+  if (!selA || selA.repere !== "porc-acetabulum" || !carteA.includes("Acetabulum")) erreurs.push(`porc : repère cotyle ${JSON.stringify(selA)} « ${(carteA || "").slice(0, 60)} »`);
+
   // 3 sexies. parcours guidé : une seule étape à l'écran, du début à la fin
   await ouvrir("?region=cuisse&pas=1");
   const RC = ATELIER.regions.cuisse;
@@ -378,9 +440,18 @@ try {
   await attendre(600);
   const liens = await lire("[...document.querySelectorAll('#liste-pieces a')].map((a) => a.getAttribute('href'))");
   for (const h of ["atelier.html?region=cuisse", "atelier.html?os=coxal", "atelier.html?region=epaule", "atelier.html?os=palette", "atelier.html?region=aloyau", "atelier.html?region=avant", "atelier.html?region=flanc",
-    ...Object.keys(ATELIER.regions).map((r) => `atelier.html?region=${r}&pas=1`)]) {
+    ...Object.keys(ATELIER.regions).filter((r) => !ATELIER.regions[r].squelette).map((r) => `atelier.html?region=${r}&pas=1`)]) {
     if (!liens.includes(h)) erreurs.push(`appli : lien ${h} absent de la liste des os (${liens})`);
   }
+  // le porc : son squelette entier en grand, et chaque fiche d'os mène à la page de l'os
+  await lire("location.hash = '#porc/squelette'");
+  await attendre(1200);
+  const liensP = await lire("[...document.querySelectorAll('#liste-pieces a')].map((a) => a.getAttribute('href'))");
+  if (!liensP.includes("atelier.html?region=porc")) erreurs.push(`appli : lien vers le squelette du porc en grand absent (${liensP})`);
+  if (liensP.some((h) => /region=(cuisse|epaule|aloyau|avant|flanc)/.test(h))) erreurs.push("appli : la liste des os du porc propose des pages du bœuf");
+  await lire("location.hash = '#porc/squelette/femur'");
+  await attendre(900);
+  if (!(await lire("!!document.querySelector('#panneau a[href=\"atelier.html?os=porc-femur\"]')"))) erreurs.push("appli : la fiche du fémur du porc n'ouvre pas sa page atelier");
   await lire("location.hash = '#boeuf/squelette/coxal'");
   await attendre(900);
   if (!(await lire("!!document.querySelector('#panneau a[href=\"atelier.html?os=coxal\"]')"))) erreurs.push("appli : la fiche de l'os du bassin n'ouvre pas l'atelier");
@@ -431,4 +502,4 @@ if (erreurs.length) {
   console.error(`ÉCHEC — ${erreurs.length} problème(s) :\n - ` + erreurs.join("\n - "));
   process.exit(1);
 }
-console.log(`OK — atelier : ${clics} muscles des 5 régions (cuisse, épaule, aloyau, avant, flanc) cliqués en 3D (carte « comment le séparer »), séparation, ${Object.values(ATELIER.regions).map((r) => r.etapes.length).join(" + ")} étapes, zoom, rotation, os du bassin, palette, vertèbres des reins et sternum (repères, muscles autour), tranche grasse, paleron ouvert sur son nerf, filet démonté, onglet ouvert sur son nerf, téléphone (toucher, pincer) et liens depuis l'appli vérifiés. Captures : outils/captures/atelier-*.png`);
+console.log(`OK — atelier : ${clics} vrais clics en 3D (les muscles des 5 régions du bœuf : carte « comment le séparer » ; les ${ATELIER.regions.porc.os.length} os du porc et leurs pages avec repères), séparation, ${Object.values(ATELIER.regions).map((r) => r.etapes.length).join(" + ")} étapes, zoom, rotation, os du bassin, palette, vertèbres des reins et sternum (repères, muscles autour), tranche grasse, paleron ouvert sur son nerf, filet démonté, onglet ouvert sur son nerf, téléphone (toucher, pincer) et liens depuis l'appli vérifiés. Captures : outils/captures/atelier-*.png`);

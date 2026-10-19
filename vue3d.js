@@ -5,7 +5,7 @@
  * position le long du corps, exactement comme sur une planche de boucherie. Le même calcul
  * sert à savoir quelle pièce est sous le doigt ou la souris.
  *
- * Mode squelette (bœuf) : os réalistes et muscles en volumes (data/anatomie.js, chargé à la
+ * Mode squelette (bœuf, porc) : os réalistes et muscles en volumes (data/anatomie[-animal].js, chargé à la
  * demande). Toucher un os « plonge » dessus : la caméra le centre et tourne autour, les autres os
  * s'estompent et les muscles posés dessus apparaissent. Navigation libre : tourner dans tous les
  * sens, zoomer (molette, pincer), déplacer (clic droit, Maj + glisser, deux doigts).
@@ -112,19 +112,21 @@
   }
 
   // ---------- anatomie (os réalistes + muscles), chargée à la demande ----------
-  let promesseAnatomie = null;
-  function chargerAnatomie() {
-    if (window.ANATOMIE) return Promise.resolve(window.ANATOMIE);
-    if (!promesseAnatomie) {
-      promesseAnatomie = new Promise((ok, ko) => {
+  // un fichier par animal : data/anatomie.js (bœuf), data/anatomie-<animal>.js (les autres)
+  const promessesAnatomie = {};
+  function chargerAnatomie(animal = "boeuf") {
+    if (window.ANATOMIE && window.ANATOMIE[animal]) return Promise.resolve(window.ANATOMIE);
+    if (!promessesAnatomie[animal]) {
+      const fichier = animal === "boeuf" ? "data/anatomie.js" : `data/anatomie-${animal}.js`;
+      promessesAnatomie[animal] = new Promise((ok, ko) => {
         const s = document.createElement("script");
-        s.src = "data/anatomie.js";
-        s.onload = () => (window.ANATOMIE ? ok(window.ANATOMIE) : ko(new Error("anatomie vide")));
-        s.onerror = () => { promesseAnatomie = null; ko(new Error("data/anatomie.js introuvable")); };
+        s.src = fichier;
+        s.onload = () => (window.ANATOMIE && window.ANATOMIE[animal] ? ok(window.ANATOMIE) : ko(new Error(`${fichier} : squelette absent`)));
+        s.onerror = () => { delete promessesAnatomie[animal]; ko(new Error(`${fichier} introuvable`)); };
         document.head.appendChild(s);
       });
     }
-    return promesseAnatomie;
+    return promessesAnatomie[animal];
   }
 
   // Un maillage d'os ou de muscle ; miroir = côté droit (z -> -z, triangles retournés).

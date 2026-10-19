@@ -12,8 +12,14 @@
   let MAILL = null;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const PIECES = (window.PIECES && window.PIECES.boeuf) || [];
-  const OS_APP = (window.OS && window.OS.boeuf) || [];
+  // l'animal de la page : celui de la région demandée (le porc pour ?region=porc ou ?os=porc-…), le bœuf sinon
+  const ANIMAL = (() => {
+    const q0 = new URLSearchParams(location.search), o0 = q0.get("os"), r0 = q0.get("region");
+    const R0 = o0 ? Object.values(A.regions).find((R) => R.os.includes(o0)) : A.regions[r0];
+    return (R0 && R0.animal) || "boeuf";
+  })();
+  const PIECES = (window.PIECES && window.PIECES[ANIMAL]) || [];
+  const OS_APP = (window.OS && window.OS[ANIMAL]) || [];
   const nomPiece = (id) => (PIECES.find((p) => p.id === id) || {}).nom || id;
   const nomOs = (id) => (A.os[id] && A.os[id].nom) || (OS_APP.find((o) => o.id === id) || {}).nom || id;
 
@@ -38,14 +44,21 @@
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
-  function geometrie(e) {
+  // miroir : le côté droit d'un os pair (z -> -z, triangles retournés pour garder l'extérieur dehors)
+  function geometrie(e, miroir = false) {
     const q16 = new Uint16Array(octets(e.sommets).buffer);
     const [lo, hi] = e.boite;
     const pos = new Float32Array(q16.length);
-    for (let i = 0; i < q16.length; i++) { const a = i % 3; pos[i] = lo[a] + (q16[i] / 65535) * (hi[a] - lo[a]); }
+    for (let i = 0; i < q16.length; i++) {
+      const a = i % 3;
+      pos[i] = lo[a] + (q16[i] / 65535) * (hi[a] - lo[a]);
+      if (miroir && a === 2) pos[i] = -pos[i];
+    }
     const g = new T.BufferGeometry();
     g.setAttribute("position", new T.BufferAttribute(pos, 3));
-    g.setIndex(new T.BufferAttribute(new Uint16Array(octets(e.triangles).buffer), 1));
+    let idx = new Uint16Array(octets(e.triangles).buffer);
+    if (miroir) { idx = idx.slice(); for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; } }
+    g.setIndex(new T.BufferAttribute(idx, 1));
     for (const [cle, attr, brut] of [["ombre", "ombre"], ["gras", "gras"], ["nacre", "nacre"], ["parties", "partie", true]]) {
       if (!e[cle]) continue;
       const b = octets(e[cle]);
@@ -99,6 +112,13 @@
       const o = ajouter("os", id, geometrie(e), mat, { nom: nomOs(id) });
       o.mesh.renderOrder = 1;
       if (vue.type === "os") osCentral = o;
+      // squelette entier (région « squelette ») : l'os pair du côté droit, reflet du gauche ; il n'a ni nom ni
+      // ligne dans les listes, et le toucher choisit son jumeau de gauche
+      if (REGION.squelette && vue.type === "region" && e.pair) {
+        const d = ajouter("os", id + "~d", geometrie(e, true), window.Materiaux3D.os({ coupeZ: -10,
+          couleursParties: A.partiesCoxal.map((p) => p.couleur) }), { nom: nomOs(id), jumeau: id });
+        d.mesh.renderOrder = 1;
+      }
     }
     for (const id of musclesDeLaVue()) {
       const e = mDispo.get(id);
@@ -262,7 +282,8 @@
     et.forEach((e, i) => { if (i < etape) e.muscles.forEach((m) => leves.add(m)); else if (i === etape) e.muscles.forEach((m) => courants.add(m)); });
     for (const o of objets) {
       o.leve = leves.has(o.id); o.courant = courants.has(o.id);
-      const k = o.type === "os" ? 0 : (o.leve ? 0.5 : 0) + (o.courant ? (PAS ? 0.2 : 0.1) : 0) + separer * (vue.type === "os" ? 0.75 : vue.piece ? 0.55 : 0.26);
+      // squelette entier : le curseur écarte les os les uns des autres (vue éclatée)
+      const k = o.type === "os" ? (REGION.squelette && vue.type === "region" ? separer * 0.32 : 0) : (o.leve ? 0.5 : 0) + (o.courant ? (PAS ? 0.2 : 0.1) : 0) + separer * (vue.type === "os" ? 0.75 : vue.piece ? 0.55 : 0.26);
       o.cible.copy(o.dir).multiplyScalar(k * rayonSeparation * (vue.type === "os" ? 1.4 : 1));
     }
     demanderRendu();
@@ -275,8 +296,9 @@
       if (o.type === "gras") vu = vu && voir.gras && !o.leve;
       if (o.type === "muscle" && vue.type === "os") vu = vu && voir.autour;
       o.mesh.visible = vu;
-      u.marque.value = o === choisi || o.courant ? 1 : 0;
-      u.survol.value = o === survol ? 1 : 0;
+      const ref = o.jumeau ? parId.get(o.jumeau) : o;          // l'os de droite s'allume avec celui de gauche
+      u.marque.value = ref === choisi || o.courant ? 1 : 0;
+      u.survol.value = ref === survol ? 1 : 0;
       if (u.voirGras) u.voirGras.value = voir.gras ? 1 : 0;
       if (u.voirNacre) u.voirNacre.value = voir.nacre ? 1 : 0;
       if (u.voirParties) u.voirParties.value = voir.parties ? 1 : 0;
@@ -309,7 +331,7 @@
     };
     for (const o of objets) {
       if (o.type === "muscle" || o.type === "gras") mk("", o.nom, o, o.ancre);
-      else if (vue.type === "region") mk("os", o.nom, o, o.ancre);
+      else if (vue.type === "region" && !o.jumeau) mk("os", o.nom, o, o.ancre);
     }
     for (const r of reperes) mk("os", r.info.nom, osCentral, r.point, r);
   }
@@ -393,6 +415,7 @@
     c.hidden = false;
   }
   function choisir(o, cadrerDessus = false) {
+    if (o && o.jumeau) o = parId.get(o.jumeau);
     if (PAS) { choisi = o; repereChoisi = null; infoPas = o || null; rendrePas(); majApparence(); return; }
     choisi = o; repereChoisi = null;
     montrerCarte(carteHtml(o));
@@ -489,7 +512,8 @@
     clearTimeout(minuteurSurvol);
     minuteurSurvol = setTimeout(() => {
       const h = viser(x, y);
-      const o = h ? h.object.userData.objet : null;
+      let o = h ? h.object.userData.objet : null;
+      if (o && o.jumeau) o = parId.get(o.jumeau);
       if (o !== survol) { survol = o; majApparence(); }
       toile.style.cursor = o ? "pointer" : "grab";
     }, 40);
@@ -554,11 +578,17 @@
     document.title = titre + " — Atelier 3D";
     // autres vues
     // les vues de cette région, puis l'entrée des autres régions
-    const liens = [...REGION.vues, ...Object.entries(A.regions).filter(([r]) => r !== REGION_ID).map(([r, R]) => [R.court, `?region=${r}`])];
+    // les autres régions du même animal, puis l’entrée des autres animaux (leur première région)
+    const animalDe = (R) => R.animal || "boeuf";
+    const autresAnimaux = [...new Set(Object.values(A.regions).map(animalDe))].filter((a) => a !== ANIMAL)
+      .map((a) => Object.entries(A.regions).find(([, R]) => animalDe(R) === a)).map(([r]) => [{ boeuf: "Bœuf", porc: "Porc" }[animalDe(A.regions[r])] || r, `?region=${r}`]);
+    const liens = [...REGION.vues, ...Object.entries(A.regions).filter(([r, R]) => r !== REGION_ID && animalDe(R) === ANIMAL)
+      .map(([r, R]) => [R.court, `?region=${r}`]), ...autresAnimaux];
+    $("retour").href = `index.html#${ANIMAL}/squelette`;
     $("vues").innerHTML = liens.map(([n, h]) => `<a href="atelier.html${h}" class="${location.search === h ? "actif" : ""}">${esc(n)}</a>`).join("");
     // bascules
-    const bascules = [["gras", "Gras", objets.some((o) => o.type === "gras")], ["nacre", "Peaux nacrées", true],
-      ["os", "Os", vue.type !== "os"], ["noms", "Noms", true], ["parties", "Parties de l’os", vue.type === "os" && vue.id === "coxal"],
+    const bascules = [["gras", "Gras", objets.some((o) => o.type === "gras")], ["nacre", "Peaux nacrées", objets.some((o) => o.type === "muscle")],
+      ["os", "Os", vue.type !== "os" && !REGION.squelette], ["noms", "Noms", true], ["parties", "Parties de l’os", vue.type === "os" && /coxal$/.test(vue.id)],
       ["autour", "Muscles autour", vue.type === "os" && objets.some((o) => o.type === "muscle")]];
     $("bascules").innerHTML = bascules.filter((b) => b[2]).map(([k, n]) => `<button type="button" data-voir="${k}" aria-pressed="${voir[k]}">${esc(n)}</button>`).join("");
     $("bascules").onclick = (e) => {
@@ -577,6 +607,12 @@
     // muscles, groupés par pièce
     const mus = objets.filter((o) => o.type === "muscle" || o.type === "gras");
     $("titre-muscles").textContent = vue.type === "os" ? "Muscles posés sur l’os" : "Muscles";
+    // squelette sans muscles (porc) : pas de bloc « Muscles » ; le curseur écarte les os (squelette entier) ou disparaît
+    const sansMuscles = !objets.some((o) => o.type === "muscle" || o.type === "gras");
+    $("muscles").closest(".bloc").hidden = sansMuscles && ANIMAL !== "boeuf";
+    const curseur = document.querySelector('label[for="separer"]');
+    if (sansMuscles && REGION.squelette && vue.type === "region") curseur.firstChild.textContent = "Écarter les os ";
+    else if (sansMuscles) { curseur.hidden = true; $("separer").hidden = true; }
     if (vue.type === "region" && !vue.piece) {
       const gras = mus.filter((o) => o.type === "gras");
       $("muscles").innerHTML = (gras.length ? `<div class="groupe-muscles"><ul>${gras.map(ligneObjet).join("")}</ul></div>` : "")
@@ -592,7 +628,7 @@
       if (li) choisir(parId.get(li.dataset.objet), true);
     };
     // os
-    const os = objets.filter((o) => o.type === "os");
+    const os = objets.filter((o) => o.type === "os" && !o.jumeau);
     $("bloc-os").hidden = !os.length;
     $("liste-os").innerHTML = os.map((o) => `<li data-objet="${esc(o.id)}"><span class="pastille" style="background:#e8dcc1"></span><span>${esc(o.nom)}</span>
       ${A.os[o.id] && vue.type !== "os" ? `<a class="oeil" href="atelier.html?os=${o.id}" title="Voir l’os seul" onclick="event.stopPropagation()">↗</a>` : ""}</li>`).join("");
@@ -601,7 +637,7 @@
     $("bloc-reperes").hidden = !reperes.length;
     $("reperes").innerHTML = reperes.map((r, i) => `<li data-repere="${i}"><span class="pastille" style="background:#fff"></span>
       <span><strong>${esc(r.info.nom)}</strong> <small>${esc(r.info.latin || "")}</small><br><small>${esc(r.info.boucher || "")}</small></span></li>`).join("")
-      + (vue.id === "coxal" ? `<li class="note">${A.partiesCoxal.map((p) => `<span class="pastille" style="background:${p.couleur}"></span> ${esc(p.nom)}`).join(" · ")} : bouton « Parties de l’os » (limites approximatives, les trois os sont soudés chez l’adulte).</li>` : "");
+      + (/coxal$/.test(vue.id || "") ? `<li class="note">${A.partiesCoxal.map((p) => `<span class="pastille" style="background:${p.couleur}"></span> ${esc(p.nom)}`).join(" · ")} : bouton « Parties de l’os » (limites approximatives, les trois os sont soudés chez l’adulte).</li>` : "");
     $("reperes").onclick = (e) => { const li = e.target.closest("[data-repere]"); if (li) choisirRepere(reperes[+li.dataset.repere]); };
     // étapes
     const et = listeEtapes();
@@ -623,7 +659,7 @@
     et.forEach((e) => (e.sources || []).forEach((s) => cles.add(s)));
     for (const o of objets) if (o.info && o.info.anatSource) cles.add(o.info.anatSource);
     if (reperes.length) cles.add((A.os[vue.id] && A.os[vue.id].sourceReperes) || "imaios");
-    cles.add("planches"); cles.add("reussir");
+    if (ANIMAL === "boeuf") { cles.add("planches"); cles.add("reussir"); } else { cles.add("sisson"); cles.add("cuyer"); cles.add("aciaPorc"); }
     $("sources").innerHTML = [...cles].filter((c) => A.sources[c]).map((c) => `<li>${lienSource(c)}</li>`).join("");
     // séparer
     $("separer").oninput = (e) => {

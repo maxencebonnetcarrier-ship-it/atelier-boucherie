@@ -1,8 +1,10 @@
-# Fabrique app/data/anatomie.js : squelette réaliste du bœuf (et muscles posés sur les os),
-# chargé par l'appli seulement quand on ouvre le squelette.
+# Fabrique app/data/anatomie.js (squelette réaliste du bœuf et muscles posés sur les os) et
+# app/data/anatomie-<animal>.js (squelettes des autres animaux, os seulement pour l'instant), chargés par l'appli
+# seulement quand on ouvre le squelette de cet animal.
 #
 #   python outils/anatomie.py            reconstruit ce qui manque dans le cache, puis écrit le fichier
-#   python outils/anatomie.py femur cotes   force la reconstruction de ces éléments
+#   python outils/anatomie.py femur cotes   force la reconstruction de ces os du bœuf
+#   python outils/anatomie.py porc/crane    force la reconstruction d'un os du porc (« porc » : tout le porc)
 #   python outils/anatomie.py tout       reconstruit tout
 #
 # Morceaux de viande : outils/viande.py (ils remplissent la carcasse, à partir des germes de muscles.py).
@@ -18,7 +20,10 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from squelette import SQUELETTES  # noqa: E402
+from squelette import SQUELETTES as _SQ_BOEUF  # noqa: E402
+from squelette_porc import OS_PORC  # noqa: E402
+
+SQUELETTES = {**_SQ_BOEUF, "porc": OS_PORC}
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(RACINE, "outils", "cache", "anatomie")
@@ -125,7 +130,9 @@ def main(args):
         os_out = []
         for oid, fn, pair, cible, pas in liste:
             cle = f"{animal}-os-{oid}"
-            d = None if (tout or oid in args) else charger(cle)
+            # « femur » seul = l'os du bœuf (comme avant) ; « porc/femur » = cet os du porc ; « porc » = tout le porc
+            refaire = tout or animal in args or f"{animal}/{oid}" in args or (animal == "boeuf" and oid in args)
+            d = None if refaire else charger(cle)
             if d is None:
                 d = construire_os(oid, fn, cible, pas)
                 ranger(cle, d)
@@ -149,13 +156,18 @@ def main(args):
             mus.append({"id": mid, "pieces": spec["pieces"], "pair": spec.get("pair", True), **emballer(d)})
         if mus:
             sortie[animal]["muscles"] = mus
-    entete = ("// Fichier généré par outils/anatomie.py — ne pas modifier à la main.\n"
-              "// Squelette réaliste du bœuf et muscles posés sur les os ; os et muscles pairs : côté gauche seulement\n"
-              "// (l'appli fabrique le côté droit par symétrie). Chargé seulement à l'ouverture du squelette.\n")
-    with open(SORTIE, "w", encoding="utf-8", newline="") as fh:
-        fh.write(entete + "window.ANATOMIE = " + json.dumps(sortie, separators=(",", ":")) + ";\n")
-    print("écrit", os.path.relpath(SORTIE, RACINE), f"({os.path.getsize(SORTIE) // 1024} Ko)")
-
+    # un fichier par animal, chargé seulement à l'ouverture de SON squelette : data/anatomie.js (bœuf, le plus
+    # lourd avec ses muscles), data/anatomie-<animal>.js pour les autres
+    for animal, donnees in sortie.items():
+        chemin = SORTIE if animal == "boeuf" else os.path.join(os.path.dirname(SORTIE), f"anatomie-{animal}.js")
+        entete = ("// Fichier généré par outils/anatomie.py — ne pas modifier à la main.\n"
+                  f"// Squelette réaliste ({animal}){' et muscles posés sur les os' if donnees.get('muscles') else ''} ; "
+                  "os et muscles pairs : côté gauche seulement\n"
+                  "// (l'appli fabrique le côté droit par symétrie). Chargé seulement à l'ouverture du squelette.\n")
+        with open(chemin, "w", encoding="utf-8", newline="") as fh:
+            fh.write(entete + f"(window.ANATOMIE = window.ANATOMIE || {{}}).{animal} = "
+                     + json.dumps(donnees, separators=(",", ":")) + ";\n")
+        print("écrit", os.path.relpath(chemin, RACINE), f"({os.path.getsize(chemin) // 1024} Ko)")
 
 if __name__ == "__main__":
     main(sys.argv[1:])

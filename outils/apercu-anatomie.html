@@ -14,11 +14,12 @@
 <div id="grille"></div>
 <script src="../app/vendor/three.min.js"></script>
 <script src="../app/data/anatomie.js"></script>
+<script src="../app/data/anatomie-porc.js"></script>
 <script src="../app/data/modeles3d.js"></script>
 <script>
   const T = THREE;
   const q = new URLSearchParams(location.search);
-  const A = window.ANATOMIE.boeuf;
+  const A = window.ANATOMIE[q.get("animal") || "boeuf"];
   const ids = (q.get("os") || "tout") === "tout" ? A.os.map((o) => o.id) : q.get("os").split(",");
   const vues = (q.get("vues") || "lat,cra,dor").split(",");
   const avecMuscles = q.get("muscles") === "1";
